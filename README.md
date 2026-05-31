@@ -5,7 +5,7 @@
 [![OpenAI Whisper](https://img.shields.io/badge/OpenAI_Whisper-v20231117-00a67e.svg)](https://github.com/openai/whisper)
 [![faster-whisper](https://img.shields.io/badge/faster--whisper-1.2+-green.svg)](https://github.com/SYSTRAN/faster-whisper)
 [![Gemini](https://img.shields.io/badge/Google_Gemini-API_v1-1a73e8.svg)](https://ai.google.dev/)
-[![Claude](https://img.shields.io/badge/Anthropic_Claude-3.5_Sonnet-cc6633.svg)](https://docs.anthropic.com/)
+[![Claude](https://img.shields.io/badge/Anthropic_Claude-4.6_Sonnet-cc6633.svg)](https://docs.anthropic.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > 🤖 **Note:** This project was written with the assistance of Artificial Intelligence. Created to demonstrate modern AI-assisted development.
