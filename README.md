@@ -1,4 +1,4 @@
-# 🎤 Whisper Transcriber — Desktop GUI
+# 🎬 local-subs-generator — Local Subtitle Generator with GUI
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![CustomTkinter](https://img.shields.io/badge/CustomTkinter-5.2+-purple.svg)](https://github.com/TomSchimansky/CustomTkinter)
@@ -10,13 +10,16 @@
 
 > 🤖 **Note:** This project was written with the assistance of Artificial Intelligence. Created to demonstrate modern AI-assisted development.
 
-A powerful **desktop application** for automatic speech recognition and subtitle generation. Supports both **Faster-Whisper** and **OpenAI Whisper** backends, outputs `.TXT`, `.SRT`, and `.ASS` formats, and processes **multiple files in a queue** — all from a clean dark-themed GUI.
+A powerful **local desktop application** for automatic speech recognition and subtitle generation — **everything runs on your machine, no cloud, no internet required**. Supports both **Faster-Whisper** and **OpenAI Whisper** backends, outputs `.TXT`, `.SRT`, and `.ASS` formats, and processes **multiple files in a queue** — all from a clean dark-themed GUI.
+
+> 🖥️ **100% local processing** — your audio and video files never leave your computer. All transcription is done locally using on-device AI models.
 
 ---
 
 ## ✨ Features
 
 - 🖥️ **Desktop GUI** — built with CustomTkinter, no browser required
+- 🔒 **Fully Local** — no cloud uploads, no API calls for transcription, complete privacy
 - 📂 **File Queue** — add and process multiple audio/video files in one run
 - 🔀 **Dual Backend** — switch between **Faster-Whisper** and **OpenAI Whisper**
 - 📝 **Three Output Formats** — plain text (`.TXT`), subtitles (`.SRT`), advanced subtitles (`.ASS`)
@@ -27,6 +30,8 @@ A powerful **desktop application** for automatic speech recognition and subtitle
 - 💾 **Save Settings** — backend, model, language, and words-per-line are remembered between sessions
 - 📊 **Result Statistics** — detected language, segment count, word count, character count, avg words/segment
 - 🌙 **Dark Theme** — modern dark UI with system theme awareness
+
+<img src="examples/interface.png" width="600" alt="Application interface"/>
 
 ---
 
@@ -93,8 +98,8 @@ sudo apt-get update && sudo apt-get install ffmpeg
 
 1. **Clone the repository:**
 ```bash
-git clone https://github.com/BlackPencil-69/Subtitles-and-text-whisper.git
-cd Subtitles-and-text-whisper
+git clone https://github.com/BlackPencil-69/local-subs-generator.git
+cd local-subs-generator
 ```
 
 2. **Create a virtual environment:**
@@ -133,6 +138,9 @@ python main.py
 4. **Review results** — switch between **Full Text**, **SRT Subtitles**, and **ASS Subtitles** tabs
 5. **Export** — copy to clipboard, save a single file, or **Download All** to export every format for every file at once
 6. **New session** — click **New Transcription** to go back and process more files
+
+<img src="examples/results.png" width="600" alt="Transcription results"/>
+<img src="examples/results2.png" width="600" alt="Transcription results (alternate view)"/>
 
 ---
 
@@ -210,7 +218,7 @@ GitHub: [@BlackPencil-69](https://github.com/BlackPencil-69/)
 Telegram: [@MrKap1toshka](https://t.me/MrKap1toshka)  
 Discord: [@anonym_pro](https://discord.com/users/1149264703470698529)
 
-**Project:** [https://github.com/BlackPencil-69/Subtitles-and-text-whisper](https://github.com/BlackPencil-69/Subtitles-and-text-whisper)
+**Project:** [https://github.com/BlackPencil-69/local-subs-generator](https://github.com/BlackPencil-69/local-subs-generator)
 
 ---
 
