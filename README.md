@@ -10,7 +10,7 @@
 
 > 🤖 **Note:** This project was written with the assistance of Artificial Intelligence. Created to demonstrate modern AI-assisted development.
 
-A powerful **local desktop application** for automatic speech recognition and subtitle generation — **everything runs on your machine, no cloud, no internet required**. Supports both **Faster-Whisper** and **OpenAI Whisper** backends, outputs `.TXT`, `.SRT`, and `.ASS` formats, and processes **multiple files in a queue** — all from a clean dark-themed GUI.
+A powerful **local desktop application** for automatic speech recognition and subtitle generation — **everything runs on your machine, no cloud, no internet required**. Supports both **Faster-Whisper** and **OpenAI Whisper** backends, outputs `.TXT`, `.SRT`, `.VTT`, and `.ASS` formats, and processes **multiple files in a queue and supports direct video/URL transcription** — all from a clean dark-themed GUI.
 
 > 🖥️ **100% local processing** — your audio and video files never leave your computer. All transcription is done locally using on-device AI models.
 
@@ -22,9 +22,10 @@ A powerful **local desktop application** for automatic speech recognition and su
 - 🔒 **Fully Local** — no cloud uploads, no API calls for transcription, complete privacy
 - 📂 **File Queue** — add and process multiple audio/video files in one run
 - 🔀 **Dual Backend** — switch between **Faster-Whisper** and **OpenAI Whisper**
-- 📝 **Three Output Formats** — plain text (`.TXT`), subtitles (`.SRT`), advanced subtitles (`.ASS`)
-- 🌍 **Multilingual** — supports 25+ languages with flags, plus Auto-detect
+- 📝 **Three Output Formats** — plain text (`.TXT`), subtitles (`.SRT`), WEBVTT (`.VTT`), advanced subtitles (`.ASS`)
+- 🌍 **Multilingual** — supports 25+ languages, plus Auto-detect
 - 🖱️ **Drag & Drop** — drop files directly onto the queue
+- 🔗 **URL Transcription** — download and transcribe audio/video directly from links (YouTube, etc.)
 - ⚡ **Progress Bar** — real-time progress with ETA display; switches to indeterminate mode when needed
 - ❌ **Cancel Anytime** — gracefully stop transcription between segments
 - 💾 **Save Settings** — backend, model, language, and words-per-line are remembered between sessions
@@ -73,7 +74,7 @@ Ukrainian · English · German · French · Spanish · Italian · Japanese · Ch
 
 ### Requirements
 
-- **Python 3.11** (required — other versions may not work)
+- **Python 3.11** (best option — other versions may not run)
 - **FFmpeg** — must be installed and available in your system `PATH`
 
 ### Installing FFmpeg
@@ -132,7 +133,7 @@ python main.py
 
 ## 📖 How to Use
 
-1. **Add files** — drag & drop media files onto the queue, or click **Add Files...**
+1. **Add files** — drag & drop media files onto the queue, or click **Add Files...** or paste the link
 2. **Configure settings** — choose backend, model, language, and max words per subtitle line
 3. **Start** — click **Start Transcription** and watch the progress bar with ETA
 4. **Review results** — switch between **Full Text**, **SRT Subtitles**, and **ASS Subtitles** tabs
@@ -150,6 +151,7 @@ python main.py
 |---|---|
 | `.TXT` | Clean plain text, words joined naturally with punctuation handling |
 | `.SRT` | Standard subtitle format, compatible with VLC, MPC-HC, Aegisub, etc. |
+| `.VTT` | Web Video Text Tracks, ideal for web-based players and HTML5 video |
 | `.ASS` | Advanced SubStation Alpha subtitles with default styling |
 
 All formats are generated in a single transcription pass — no re-processing needed.
@@ -193,6 +195,12 @@ pip install tkinterdnd2-universal
 - Check if GPU is being used (shown in the console log)
 - Try a shorter file to test
 
+### YouTube links/URL Transcription failing
+If downloading video or audio from a link fails, it is usually because the underlying `yt-dlp` library is outdated. YouTube and other platforms frequently update their code, so you need to keep `yt-dlp` up to date:
+```bash
+pip install --upgrade yt-dlp
+```
+
 ---
 
 ## 📝 License
@@ -207,6 +215,7 @@ Distributed under the MIT License. See `LICENSE` for details.
 - [openai/whisper](https://github.com/openai/whisper) — original Whisper model
 - [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) — modern Tkinter UI
 - [FFmpeg](https://ffmpeg.org/) — media processing
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — advanced video/audio download utility
 - [Claude](https://claude.ai/) — AI assistance in generating the core architecture
 - [Gemini](https://gemini.google.com/) — AI assistance in debugging, refactoring, and feature expansion
 
