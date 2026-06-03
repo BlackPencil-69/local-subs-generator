@@ -50,6 +50,7 @@ def setup() -> None:
         _ROOT.addHandler(file_handler)
     except Exception:
         file_handler = None
+        log_file = None
 
     _ROOT.setLevel(logging.DEBUG)
     _ROOT.propagate = False
@@ -63,7 +64,7 @@ def setup() -> None:
     divider()
     _ROOT.info("Whisper Transcriber - Start")
     _ROOT.info(f"Python: {sys.version.split()[0]}   Platform: {sys.platform}")
-    _ROOT.info(f"Log file: {_get_log_path()}")
+    _ROOT.info(f"Log file: {log_file or 'unavailable'}")
     divider()
 
 def _attach_library_loggers(handler: logging.Handler) -> None:

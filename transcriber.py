@@ -15,6 +15,9 @@ INDETERMINATE_SIGNAL: float = -2.0
 ERROR_SIGNAL: float = -1.0
 RESULT_SIGNAL: float = -3.0
 
+def _subprocess_flags() -> dict:
+    return {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
 class WhisperWord(TypedDict):
     word: str
     start: Optional[float]
@@ -61,15 +64,18 @@ def format_srt_time(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 def format_ass_time(seconds: float) -> str:
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = round(seconds % 60, 2)
-    return f"{h}:{m:02d}:{s:05.2f}"
+    total_cs = int(seconds * 100)
+    cs = total_cs % 100
+    total_s = total_cs // 100
+    s = total_s % 60
+    m = (total_s // 60) % 60
+    h = total_s // 3600
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 def get_audio_tracks(file_path: str) -> list[dict]:
     try:
         cmd = ["ffprobe", "-v", "error", "-show_entries", "stream=index,codec_type,tags:language,tags:title", "-of", "json", file_path]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=True, encoding="utf-8", creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True, encoding="utf-8", **_subprocess_flags())
         data = json.loads(res.stdout)
         tracks = []
         for stream in data.get("streams", []):
@@ -88,7 +94,7 @@ def extract_audio_track(input_file: str, stream_index: int) -> str:
     fd, temp_path = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     cmd = ["ffmpeg", "-y", "-i", input_file, "-map", f"0:{stream_index}", "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", temp_path]
-    subprocess.run(cmd, capture_output=True, check=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    subprocess.run(cmd, capture_output=True, check=True, **_subprocess_flags())
     return temp_path
 
 def _is_cjk_language(all_words: list[WhisperWord]) -> bool:
@@ -129,8 +135,9 @@ def _post_process_broken_lines(lines: list[tuple[float, float, str]]) -> list[tu
     for current_start, current_end, current_text in lines[1:]:
         prev_start, prev_end, prev_text = merged[-1]
         
-        starts_with_punct = bool(re.match(r"^['ʼ`’\-]\w", current_text))
-        ends_with_punct = bool(re.search(r"['ʼ`’\-]$", prev_text))
+        PUNCT_CHARS = r"['’ʼ`\-]"
+        starts_with_punct = bool(re.match(rf"^{PUNCT_CHARS}\w", current_text))
+        ends_with_punct   = bool(re.search(rf"{PUNCT_CHARS}$", prev_text))
         
         if starts_with_punct or ends_with_punct:
             new_text = prev_text + current_text
@@ -171,6 +178,18 @@ def build_srt_text(lines: list[tuple[float, float, str]]) -> str:
     for idx, (start_t, end_t, text) in enumerate(lines, start=1):
         parts.append(str(idx))
         parts.append(f"{format_srt_time(start_t)} --> {format_srt_time(end_t)}")
+        parts.append(text)
+        parts.append("")
+    return "\n".join(parts)
+
+def format_vtt_time(seconds: float) -> str:
+    # VTT використовує крапку замість коми для мілісекунд, в іншому формат ідентичний SRT
+    return format_srt_time(seconds).replace(',', '.')
+
+def build_vtt_text(lines: list[tuple[float, float, str]]) -> str:
+    parts = ["WEBVTT\n"]
+    for start_t, end_t, text in lines:
+        parts.append(f"{format_vtt_time(start_t)} --> {format_vtt_time(end_t)}")
         parts.append(text)
         parts.append("")
     return "\n".join(parts)
@@ -255,7 +274,7 @@ def _run_faster_whisper(config: TranscriptionConfig, target_file: str, device: s
         vad_parameters=dict(min_silence_duration_ms=500),
     )
 
-    total_dur = max(info.duration or 0.0, 0.001)
+    total_dur = info.duration if info.duration and info.duration > 0 else None
     detected_lang = info.language or "unknown"
     
     all_segments: list[WhisperSegment] = []
@@ -271,15 +290,16 @@ def _run_faster_whisper(config: TranscriptionConfig, target_file: str, device: s
                 all_words.append(word_dict)
                 segment_dict["words"].append(word_dict)
         all_segments.append(segment_dict)
-        ratio = min(seg.end / total_dur, 1.0)
-        prog = 0.10 + ratio * 0.83
+        ratio = min(seg.end / total_dur, 1.0) if total_dur else INDETERMINATE_SIGNAL
+        prog = 0.10 + ratio * 0.83 if ratio != INDETERMINATE_SIGNAL else INDETERMINATE_SIGNAL
         elapsed = time.monotonic() - t_start
         eta_str = ""
-        if ratio > 0.005 and elapsed > 0.3:
+        if total_dur and ratio > 0.005 and elapsed > 0.3:
             total_est = elapsed / ratio
             remaining = max(0.0, total_est - elapsed)
             eta_str = f"  ETA: {int(remaining // 60)}m {int(remaining % 60)}s" if remaining >= 60 else f"  ETA: {int(remaining)}s"
-        cb(min(prog, 0.93), f"Transcribing: {seg.end:.1f}s / {total_dur:.1f}s |{eta_str}")
+        dur_str = f"{total_dur:.1f}s" if total_dur else "?"
+        cb(min(prog, 0.93) if prog != INDETERMINATE_SIGNAL else INDETERMINATE_SIGNAL, f"Transcribing: {seg.end:.1f}s / {dur_str} |{eta_str}")
 
     return _generate_result_dict(config, all_segments, all_words, detected_lang)
 
@@ -331,13 +351,15 @@ def _generate_result_dict(config: TranscriptionConfig, all_segments: list[Whispe
                 line_text = "".join(line_text.split())
         txt_lines.append(line_text)
         
-    txt_content = " ".join(txt_lines)
+    separator = "" if cjk_mode else " "
+    txt_content = separator.join(txt_lines)
     
     txt_content = re.sub(r"\s+(['ʼ`'\-])(?=\w)", r"\1", txt_content)
     txt_content = re.sub(r"(['ʼ`'\-])\s+(?=\w)", r"\1", txt_content)
 
     srt_lines = segments_to_srt_lines(all_segments, config.max_words_per_line, cjk_mode)
     srt_content = build_srt_text(srt_lines)
+    vtt_content = build_vtt_text(srt_lines) # <--- Додано VTT
     ass_content = build_ass_text(srt_lines)
 
     stats = {
@@ -352,6 +374,7 @@ def _generate_result_dict(config: TranscriptionConfig, all_segments: list[Whispe
         "file": config.input_file,
         "txt": txt_content,
         "srt": srt_content,
+        "vtt": vtt_content, # <--- Додано VTT
         "ass": ass_content,
         "stats": stats
     }
