@@ -122,29 +122,24 @@ def _join_tokens(tokens: list[WhisperWord], cjk: bool) -> str:
     cleaned = [w["word"].strip() for w in tokens]
     if cjk:
         return "".join(cleaned)
-    
     text = " ".join(cleaned).strip()
-    text = re.sub(r"\s+(['ʼ`’-])(?=\w)", r"\1", text)
+    text = re.sub(r"\s+(['ʼ`'-])(?=\w)", r"\1", text)
     return text
 
 def _post_process_broken_lines(lines: list[tuple[float, float, str]]) -> list[tuple[float, float, str]]:
     if not lines:
         return []
-    
     merged = [lines[0]]
     for current_start, current_end, current_text in lines[1:]:
         prev_start, prev_end, prev_text = merged[-1]
-        
-        PUNCT_CHARS = r"['’ʼ`\-]"
+        PUNCT_CHARS = r"[''ʼ`\-]"
         starts_with_punct = bool(re.match(rf"^{PUNCT_CHARS}\w", current_text))
         ends_with_punct   = bool(re.search(rf"{PUNCT_CHARS}$", prev_text))
-        
         if starts_with_punct or ends_with_punct:
             new_text = prev_text + current_text
             merged[-1] = (prev_start, current_end, new_text)
         else:
             merged.append((current_start, current_end, current_text))
-            
     return merged
 
 def segments_to_srt_lines(segments: list[WhisperSegment], max_words: int, cjk: bool) -> list[tuple[float, float, str]]:
@@ -164,9 +159,11 @@ def segments_to_srt_lines(segments: list[WhisperSegment], max_words: int, cjk: b
             current_chars += len(w["word"])
             if len(current_chunk) >= max_words or current_chars >= max_chars or i == len(words) - 1:
                 start_t = current_chunk[0].get("start")
-                if start_t is None: start_t = seg.get("start", 0.0)
+                if start_t is None:
+                    start_t = seg.get("start", 0.0)
                 end_t = current_chunk[-1].get("end")
-                if end_t is None: end_t = seg.get("end", 0.0)
+                if end_t is None:
+                    end_t = seg.get("end", 0.0)
                 text = _join_tokens(current_chunk, cjk)
                 lines.append((start_t, end_t, text))
                 current_chunk = []
@@ -183,7 +180,6 @@ def build_srt_text(lines: list[tuple[float, float, str]]) -> str:
     return "\n".join(parts)
 
 def format_vtt_time(seconds: float) -> str:
-    # VTT використовує крапку замість коми для мілісекунд, в іншому формат ідентичний SRT
     return format_srt_time(seconds).replace(',', '.')
 
 def build_vtt_text(lines: list[tuple[float, float, str]]) -> str:
@@ -212,6 +208,97 @@ def build_ass_text(lines: list[tuple[float, float, str]]) -> str:
         clean_text = text.replace("\n", "\\N")
         parts.append(f"Dialogue: 0,{format_ass_time(start_t)},{format_ass_time(end_t)},Default,,0,0,0,,{clean_text}")
     return "\n".join(parts)
+
+
+def _build_youtube_srt_lines(segments: list[WhisperSegment], cjk: bool) -> list[tuple[float, float, str]]:
+    """
+    Builds subtitle lines using the cumulative word-by-word approach.
+    For each segment, each new word reveal creates a new subtitle entry
+    showing all words accumulated so far in that segment.
+    The cue starts at the current word's timestamp and ends at the next
+    word's start (or the segment end for the last word).
+    """
+    lines: list[tuple[float, float, str]] = []
+    for seg in segments:
+        words = seg.get("words", [])
+        if not words:
+            lines.append((seg.get("start", 0.0), seg.get("end", 0.0), seg.get("text", "").strip()))
+            continue
+        seg_end = seg.get("end", 0.0)
+        for i, w in enumerate(words):
+            word_start = w.get("start")
+            if word_start is None:
+                word_start = seg.get("start", 0.0)
+            if i + 1 < len(words):
+                next_start = words[i + 1].get("start")
+                cue_end = next_start if next_start is not None else seg_end
+            else:
+                cue_end = seg_end
+            cue_end = max(cue_end, word_start + 0.05)
+            accumulated = words[: i + 1]
+            text = _join_tokens(accumulated, cjk)
+            lines.append((word_start, cue_end, text))
+    return lines
+
+
+def _build_youtube_ass_text(segments: list[WhisperSegment], cjk: bool) -> str:
+    r"""
+    Builds ASS subtitles with karaoke-style {\k} timing tags so that each
+    word is highlighted exactly when it is spoken within the segment line.
+    The {\k<N>} tag specifies the duration in centiseconds for the following
+    syllable/word.  The entire segment is shown as a single dialogue line
+    and words light up in sequence.
+    """
+    header = "\n".join([
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        "PlayResX: 384",
+        "PlayResY: 288",
+        "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+        "Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,2,2,10,10,10,1",
+        "Style: Karaoke,Arial,20,&H0000FFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,2,2,10,10,10,1",
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ])
+    dialogue_lines = []
+    for seg in segments:
+        words = seg.get("words", [])
+        if not words:
+            text = seg.get("text", "").strip()
+            start_t = seg.get("start", 0.0)
+            end_t = seg.get("end", 0.0)
+            dialogue_lines.append(
+                f"Dialogue: 0,{format_ass_time(start_t)},{format_ass_time(end_t)},Karaoke,,0,0,0,,{text}"
+            )
+            continue
+        seg_start = seg.get("start", 0.0)
+        seg_end = seg.get("end", 0.0)
+        tagged_parts: list[str] = []
+        for i, w in enumerate(words):
+            w_start = w.get("start")
+            if w_start is None:
+                w_start = seg_start
+            if i + 1 < len(words):
+                next_start = words[i + 1].get("start")
+                w_end = next_start if next_start is not None else seg_end
+            else:
+                w_end = seg_end
+            duration_cs = max(1, int(round((w_end - w_start) * 100)))
+            word_text = w["word"].strip()
+            if cjk:
+                tagged_parts.append(f"{{\\k{duration_cs}}}{word_text}")
+            else:
+                separator = "" if i == 0 else " "
+                tagged_parts.append(f"{separator}{{\\k{duration_cs}}}{word_text}")
+        line_text = "".join(tagged_parts)
+        dialogue_lines.append(
+            f"Dialogue: 0,{format_ass_time(seg_start)},{format_ass_time(seg_end)},Karaoke,,0,0,0,,{line_text}"
+        )
+    return header + "\n" + "\n".join(dialogue_lines)
+
 
 def transcribe(config: TranscriptionConfig, progress_callback: Callable[[float, str], None], cancel_flag: threading.Event) -> Optional[dict]:
     device = detect_device()
@@ -260,7 +347,8 @@ def _run_faster_whisper(config: TranscriptionConfig, target_file: str, device: s
         model = WhisperModel(config.model_name, device="cpu", compute_type="int8")
         device = "cpu"
 
-    if cancel_flag.is_set(): return None
+    if cancel_flag.is_set():
+        return None
 
     lang = None if config.language == "Auto-detect" else config.language
     _cb_log(cb, 0.10, "Analyzing media and starting transcription…")
@@ -276,13 +364,14 @@ def _run_faster_whisper(config: TranscriptionConfig, target_file: str, device: s
 
     total_dur = info.duration if info.duration and info.duration > 0 else None
     detected_lang = info.language or "unknown"
-    
+
     all_segments: list[WhisperSegment] = []
     all_words: list[WhisperWord] = []
     t_start = time.monotonic()
 
     for seg in segments_gen:
-        if cancel_flag.is_set(): return None
+        if cancel_flag.is_set():
+            return None
         segment_dict: WhisperSegment = {"start": seg.start, "end": seg.end, "text": seg.text, "words": []}
         if seg.words:
             for w in seg.words:
@@ -315,14 +404,16 @@ def _run_openai_whisper(config: TranscriptionConfig, target_file: str, device: s
         model = whisper.load_model(config.model_name, device="cpu")
         device = "cpu"
 
-    if cancel_flag.is_set(): return None
+    if cancel_flag.is_set():
+        return None
 
     lang = None if config.language == "Auto-detect" else config.language
     indeterminate_msg = f"Transcribing on {device.upper()} [{config.model_name}]… Please wait."
     cb(INDETERMINATE_SIGNAL, indeterminate_msg)
 
     result = model.transcribe(target_file, language=lang, word_timestamps=True, verbose=False)
-    if cancel_flag.is_set(): return None
+    if cancel_flag.is_set():
+        return None
 
     all_segments: list[WhisperSegment] = result["segments"]
     detected_lang = result.get("language", "unknown")
@@ -341,6 +432,7 @@ def _run_openai_whisper(config: TranscriptionConfig, target_file: str, device: s
 
 def _generate_result_dict(config: TranscriptionConfig, all_segments: list[WhisperSegment], all_words: list[WhisperWord], detected_lang: str) -> dict:
     cjk_mode = _is_cjk_language(all_words) if all_words else False
+
     txt_lines = []
     for seg in all_segments:
         if seg.get("words"):
@@ -350,17 +442,21 @@ def _generate_result_dict(config: TranscriptionConfig, all_segments: list[Whispe
             if cjk_mode:
                 line_text = "".join(line_text.split())
         txt_lines.append(line_text)
-        
+
     separator = "" if cjk_mode else " "
     txt_content = separator.join(txt_lines)
-    
     txt_content = re.sub(r"\s+(['ʼ`'\-])(?=\w)", r"\1", txt_content)
     txt_content = re.sub(r"(['ʼ`'\-])\s+(?=\w)", r"\1", txt_content)
 
-    srt_lines = segments_to_srt_lines(all_segments, config.max_words_per_line, cjk_mode)
-    srt_content = build_srt_text(srt_lines)
-    vtt_content = build_vtt_text(srt_lines) # <--- Додано VTT
-    ass_content = build_ass_text(srt_lines)
+    standard_srt_lines = segments_to_srt_lines(all_segments, config.max_words_per_line, cjk_mode)
+    srt_content = build_srt_text(standard_srt_lines)
+    vtt_content = build_vtt_text(standard_srt_lines)
+    ass_content = build_ass_text(standard_srt_lines)
+
+    yt_srt_lines = _build_youtube_srt_lines(all_segments, cjk_mode)
+    yt_srt_content = build_srt_text(yt_srt_lines)
+    yt_vtt_content = build_vtt_text(yt_srt_lines)
+    yt_ass_content = _build_youtube_ass_text(all_segments, cjk_mode)
 
     stats = {
         "language": detected_lang,
@@ -374,7 +470,10 @@ def _generate_result_dict(config: TranscriptionConfig, all_segments: list[Whispe
         "file": config.input_file,
         "txt": txt_content,
         "srt": srt_content,
-        "vtt": vtt_content, # <--- Додано VTT
+        "vtt": vtt_content,
         "ass": ass_content,
-        "stats": stats
+        "yt_srt": yt_srt_content,
+        "yt_vtt": yt_vtt_content,
+        "yt_ass": yt_ass_content,
+        "stats": stats,
     }
