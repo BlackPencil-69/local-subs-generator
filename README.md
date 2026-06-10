@@ -22,10 +22,11 @@ A powerful **local desktop application** for automatic speech recognition and su
 - 🔒 **Fully Local** — no cloud uploads, no API calls for transcription, complete privacy
 - 📂 **File Queue** — add and process multiple audio/video files in one run
 - 🔀 **Dual Backend** — switch between **Faster-Whisper** and **OpenAI Whisper**
-- 📝 **Three Output Formats** — plain text (`.TXT`), subtitles (`.SRT`), WEBVTT (`.VTT`), advanced subtitles (`.ASS`)
+- 📝 **Four Output Formats** — plain text (`.TXT`), subtitles (`.SRT`), WEBVTT (`.VTT`), advanced subtitles (`.ASS`)
 - 🌍 **Multilingual** — supports 25+ languages, plus Auto-detect
 - 🖱️ **Drag & Drop** — drop files directly onto the queue
 - 🔗 **URL Transcription** — download and transcribe audio/video directly from links (YouTube, etc.)
+- 🎬 **YouTube-style Subtitles `[Beta]`** — dynamic word-by-word highlighting / karaoke-style timing. Fully optimized for `.ASS` format, with experimental support for `.SRT` and `.VTT`.
 - ⚡ **Progress Bar** — real-time progress with ETA display; switches to indeterminate mode when needed
 - ❌ **Cancel Anytime** — gracefully stop transcription between segments
 - 💾 **Save Settings** — backend, model, language, and words-per-line are remembered between sessions
@@ -136,9 +137,10 @@ python main.py
 1. **Add files** — drag & drop media files onto the queue, or click **Add Files...** or paste the link
 2. **Configure settings** — choose backend, model, language, and max words per subtitle line
 3. **Start** — click **Start Transcription** and watch the progress bar with ETA
-4. **Review results** — switch between **Full Text**, **SRT Subtitles**, and **ASS Subtitles** tabs
-5. **Export** — copy to clipboard, save a single file, or **Download All** to export every format for every file at once
-6. **New session** — click **New Transcription** to go back and process more files
+4. **Review results** — switch between **Full Text**, **SRT Subtitles**, **VTT Subtitles** and **ASS Subtitles** tabs
+5. **Toggle YouTube Style** [Beta] — turn on the YouTube Style switch in the top right corner if you want word-by-word cumulative subtitle generation.
+6. **Export** — copy to clipboard, save a single file, or **Download All** to export every format for every file at once
+7. **New session** — click **New Transcription** to go back and process more files
 
 <img src="examples/results.png" width="600" alt="Transcription results"/>
 <img src="examples/results2.png" width="600" alt="Transcription results (alternate view)"/>

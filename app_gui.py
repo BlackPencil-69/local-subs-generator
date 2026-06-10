@@ -26,7 +26,7 @@ try:
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self.TkdndVersion = TkinterDnD._require(self)
-            
+
     BASE_CLASS = TkinterDnD_CTk
     DND_SUPPORT = True
 except Exception as e:
@@ -134,10 +134,12 @@ class TranscriberApp(BASE_CLASS):
         self._running: bool = False
         self._bar_indeterminate: bool = False
         self._lockable: list = []
-        
+
         self.file_items = []
         self.results_data = {}
         self.combo_file_map = {}
+
+        self._yt_mode_var = ctk.BooleanVar(value=False)
 
         self.phase1_frame = ctk.CTkFrame(self)
         self.phase2_frame = ctk.CTkFrame(self)
@@ -162,7 +164,7 @@ class TranscriberApp(BASE_CLASS):
 
     def _build_phase1(self) -> None:
         self.phase1_frame.grid_columnconfigure(1, weight=1)
-        
+
         cfg = _load_config()
 
         ctk.CTkLabel(self.phase1_frame, text="Whisper Transcriber", font=ctk.CTkFont(size=24, weight="bold")).grid(row=0, column=0, columnspan=3, pady=(10, 15))
@@ -178,10 +180,10 @@ class TranscriberApp(BASE_CLASS):
 
         self.url_frame = ctk.CTkFrame(self.phase1_frame, fg_color="transparent")
         self.url_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=20, pady=(0, 10))
-        
+
         self.url_entry = ctk.CTkEntry(self.url_frame, placeholder_text="or paste the video link here...")
         self.url_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        
+
         self.btn_add_url = ctk.CTkButton(self.url_frame, text="Download", width=100, command=self._on_add_url)
         self.btn_add_url.pack(side="right")
 
@@ -245,7 +247,19 @@ class TranscriberApp(BASE_CLASS):
         ctk.CTkLabel(top_frame, text="Result for: ").grid(row=0, column=0, padx=5)
         self.file_combo = ctk.CTkComboBox(top_frame, values=[], command=self._on_result_select)
         self.file_combo.grid(row=0, column=1, sticky="ew", padx=5)
-        
+
+        self._yt_switch = ctk.CTkSwitch(
+            top_frame,
+            text="YouTube Style",
+            variable=self._yt_mode_var,
+            onvalue=True,
+            offvalue=False,
+            command=self._on_yt_toggle,
+            state="disabled",
+            font=ctk.CTkFont(size=12),
+        )
+        self._yt_switch.grid(row=0, column=2, padx=(10, 5), sticky="e")
+
         self.lbl_stats = ctk.CTkLabel(self.phase2_frame, text="", fg_color="#E3F2FD", text_color="black", corner_radius=6, height=30)
         self.lbl_stats.grid(row=1, column=0, sticky="ew", pady=(0, 15))
 
@@ -258,7 +272,7 @@ class TranscriberApp(BASE_CLASS):
 
         btn_frame = ctk.CTkFrame(self.phase2_frame, fg_color="transparent")
         btn_frame.grid(row=4, column=0, sticky="ew")
-        
+
         ctk.CTkButton(btn_frame, text="Copy", fg_color="#2FA572", hover_color="#1F7A52", width=120, command=self._copy_text).pack(side="left", padx=5)
         ctk.CTkButton(btn_frame, text="Download File", fg_color="#1976D2", hover_color="#1565C0", width=120, command=self._download_current).pack(side="left", padx=5)
         ctk.CTkButton(btn_frame, text="Download All", fg_color="#1976D2", hover_color="#1565C0", width=120, command=self._download_all).pack(side="left", padx=5)
@@ -267,7 +281,7 @@ class TranscriberApp(BASE_CLASS):
     def _on_drop(self, event):
         paths = self.tk.splitlist(event.data)
         self._add_files(paths)
-        
+
     def _paste_url(self) -> str:
         try:
             text = self.clipboard_get()
@@ -281,20 +295,17 @@ class TranscriberApp(BASE_CLASS):
         url = self.url_entry.get().strip()
         if not url:
             return
-            
         if not (url.startswith("http://") or url.startswith("https://")):
             self._status_var.set("Error: please enter a valid URL (http/https)")
             self.lbl_status.configure(text_color="#D32F2F")
             return
-        
         self.url_entry.delete(0, "end")
         self._set_locked(True)
         self._to_indeterminate()
         self._status_var.set("Downloading audio from URL... Please wait.")
         self.lbl_status.configure(text_color="white")
-        
         threading.Thread(target=self._download_worker, args=(url,), daemon=True).start()
-        
+
     def _download_worker(self, url: str) -> None:
         base = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
         download_dir = os.path.join(base, "downloads")
@@ -327,7 +338,6 @@ class TranscriberApp(BASE_CLASS):
                 files = glob.glob(os.path.join(download_dir, f"{job_id}.*"))
                 audio_exts = {".mp3", ".wav", ".ogg", ".m4a", ".opus", ".flac"}
                 audio_files = [f for f in files if os.path.splitext(f)[1].lower() in audio_exts]
-                
                 if audio_files:
                     self._queue.put(("__URL_DONE__", audio_files[0]))
                 else:
@@ -335,17 +345,13 @@ class TranscriberApp(BASE_CLASS):
             else:
                 err_msg = result.stderr.strip() if result.stderr else "Unknown error occurred"
                 lines = err_msg.split("\n")
-                
                 error_line = next((l for l in reversed(lines) if "ERROR:" in l.upper()), lines[-1] if lines else err_msg)
                 error_line_lower = error_line.lower()
-                
                 if "sign in" in error_line_lower or "age-restricted" in error_line_lower or "cookies" in error_line_lower:
                     error_line = "Age-restricted or sign-in required. Cannot download."
                 elif "403" in error_line_lower or "forbidden" in error_line_lower:
                     error_line = "Error 403: Forbidden (Update yt-dlp or video is restricted)."
-                    
                 self._queue.put(("__URL_ERROR__", error_line.replace("ERROR: ", "").strip()))
-                
         except subprocess.TimeoutExpired:
             self._queue.put(("__URL_ERROR__", "Download timed out."))
         except Exception as e:
@@ -369,7 +375,6 @@ class TranscriberApp(BASE_CLASS):
     def _add_files(self, paths) -> None:
         if self.placeholder_lbl.winfo_ismapped():
             self.placeholder_lbl.pack_forget()
-            
         for path in paths:
             if any(item["path"] == path for item in self.file_items):
                 continue
@@ -405,7 +410,8 @@ class TranscriberApp(BASE_CLASS):
             return False
         try:
             val = int(self._max_words_var.get())
-            if val < 1: raise ValueError
+            if val < 1:
+                raise ValueError
         except ValueError:
             messagebox.showwarning("Invalid Value", "'Max words per line' must be an integer >= 1.")
             return False
@@ -497,7 +503,7 @@ class TranscriberApp(BASE_CLASS):
             while True:
                 msg = self._queue.get_nowait()
                 value = msg[0]
-                
+
                 if value == "__URL_DONE__":
                     self._set_locked(False)
                     self._to_determinate()
@@ -528,7 +534,7 @@ class TranscriberApp(BASE_CLASS):
                     self._status_var.set(msg[1])
                 else:
                     self._to_determinate()
-                    self._bar.set(float(value)) 
+                    self._bar.set(float(value))
                     self._status_var.set(msg[1])
         except queue.Empty:
             pass
@@ -553,8 +559,11 @@ class TranscriberApp(BASE_CLASS):
         self._set_locked(False)
         self._start_btn.configure(text="Start Transcription", fg_color="#2FA572", hover_color="#1F7A52")
         self.lbl_status.configure(text_color="#2FA572")
-        
+
         if self.results_data:
+            self._yt_mode_var.set(False)
+            self._yt_switch.configure(state="normal")
+
             self.phase1_frame.grid_forget()
             self.phase2_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
             paths = list(self.results_data.keys())
@@ -570,9 +579,13 @@ class TranscriberApp(BASE_CLASS):
             self._status_var.set("Cancelled.")
             self.lbl_status.configure(text_color="gray")
 
+    def _on_yt_toggle(self) -> None:
+        self._update_text_view()
+
     def _on_result_select(self, val=None) -> None:
         name = self.file_combo.get()
-        if not name or name not in self.combo_file_map: return
+        if not name or name not in self.combo_file_map:
+            return
         path = self.combo_file_map[name]
         res = self.results_data[path]
         stats = res["stats"]
@@ -580,38 +593,50 @@ class TranscriberApp(BASE_CLASS):
         self._update_text_view()
 
     def _get_content_by_tab(self, res: dict, tab: str) -> tuple[str, str]:
-        mapping = {
-            TAB_FULL: (".txt", res["txt"]),
-            TAB_SRT: (".srt", res["srt"]),
-            TAB_VTT: (".vtt", res.get("vtt", "")),
-            TAB_ASS: (".ass", res["ass"]),
-        }
+        yt_mode = self._yt_mode_var.get()
+        if yt_mode:
+            mapping = {
+                TAB_FULL: (".txt", res["txt"]),
+                TAB_SRT: (".srt", res.get("yt_srt", "")),
+                TAB_VTT: (".vtt", res.get("yt_vtt", "")),
+                TAB_ASS: (".ass", res.get("yt_ass", "")),
+            }
+        else:
+            mapping = {
+                TAB_FULL: (".txt", res["txt"]),
+                TAB_SRT: (".srt", res["srt"]),
+                TAB_VTT: (".vtt", res.get("vtt", "")),
+                TAB_ASS: (".ass", res["ass"]),
+            }
         return mapping.get(tab, (".txt", res["txt"]))
 
     def _update_text_view(self, val=None) -> None:
         name = self.file_combo.get()
-        if not name or name not in self.combo_file_map: return
+        if not name or name not in self.combo_file_map:
+            return
         path = self.combo_file_map[name]
         res = self.results_data[path]
         tab = self.seg_btn.get()
-        
+
         _, content = self._get_content_by_tab(res, tab)
-        
+
         self.txt_view.configure(state="normal")
         self.txt_view.delete("1.0", "end")
         self.txt_view.insert("1.0", content)
         self.txt_view.configure(state="disabled")
+
     def _copy_text(self) -> None:
         self.clipboard_clear()
         self.clipboard_append(self.txt_view.get("1.0", "end-1c"))
 
     def _download_current(self) -> None:
         name = self.file_combo.get()
-        if not name or name not in self.combo_file_map: return
+        if not name or name not in self.combo_file_map:
+            return
         path = self.combo_file_map[name]
         res = self.results_data[path]
         tab = self.seg_btn.get()
-        
+
         ext, content = self._get_content_by_tab(res, tab)
         init_name = os.path.splitext(name)[0] + ext
         out_path = filedialog.asksaveasfilename(initialfile=init_name, defaultextension=ext)
@@ -621,23 +646,30 @@ class TranscriberApp(BASE_CLASS):
 
     def _download_all(self) -> None:
         dir_path = filedialog.askdirectory(title="Select output folder")
-        if not dir_path: return
+        if not dir_path:
+            return
+        yt_mode = self._yt_mode_var.get()
         for path, res in self.results_data.items():
             base = os.path.splitext(os.path.basename(path))[0]
             with open(os.path.join(dir_path, base + ".txt"), "w", encoding="utf-8") as f:
                 f.write(res["txt"])
+            srt_key = "yt_srt" if yt_mode else "srt"
+            vtt_key = "yt_vtt" if yt_mode else "vtt"
+            ass_key = "yt_ass" if yt_mode else "ass"
             with open(os.path.join(dir_path, base + ".srt"), "w", encoding="utf-8") as f:
-                f.write(res["srt"])
+                f.write(res.get(srt_key, ""))
             with open(os.path.join(dir_path, base + ".vtt"), "w", encoding="utf-8") as f:
-                f.write(res.get("vtt", ""))
+                f.write(res.get(vtt_key, ""))
             with open(os.path.join(dir_path, base + ".ass"), "w", encoding="utf-8") as f:
-                f.write(res["ass"])
+                f.write(res.get(ass_key, ""))
         messagebox.showinfo("Success", "All files saved successfully.")
 
     def _back_to_start(self) -> None:
         self._running = False
         self._cancel_event.clear()
         self._start_btn.configure(text="Start Transcription", fg_color="#2FA572", hover_color="#1F7A52")
+        self._yt_switch.configure(state="disabled")
+        self._yt_mode_var.set(False)
         self.phase2_frame.grid_forget()
         self.phase1_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         self.results_data.clear()
