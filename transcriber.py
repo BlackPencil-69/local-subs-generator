@@ -170,22 +170,26 @@ def segments_to_srt_lines(segments: list[WhisperSegment], max_words: int, cjk: b
                 current_chars = 0
     return _post_process_broken_lines(lines)
 
-def build_srt_text(lines: list[tuple[float, float, str]]) -> str:
+def build_srt_text(lines: list[tuple[float, float, str]], align_left: bool = False) -> str:
     parts = []
     for idx, (start_t, end_t, text) in enumerate(lines, start=1):
         parts.append(str(idx))
         parts.append(f"{format_srt_time(start_t)} --> {format_srt_time(end_t)}")
-        parts.append(text)
+        if align_left:
+            parts.append(f"{{\\an1}}{text}")
+        else:
+            parts.append(text)
         parts.append("")
     return "\n".join(parts)
 
 def format_vtt_time(seconds: float) -> str:
     return format_srt_time(seconds).replace(',', '.')
 
-def build_vtt_text(lines: list[tuple[float, float, str]]) -> str:
+def build_vtt_text(lines: list[tuple[float, float, str]], align_left: bool = False) -> str:
     parts = ["WEBVTT\n"]
     for start_t, end_t, text in lines:
-        parts.append(f"{format_vtt_time(start_t)} --> {format_vtt_time(end_t)}")
+        cue_settings = " align:start line:-1" if align_left else ""
+        parts.append(f"{format_vtt_time(start_t)} --> {format_vtt_time(end_t)}{cue_settings}")
         parts.append(text)
         parts.append("")
     return "\n".join(parts)
@@ -210,35 +214,105 @@ def build_ass_text(lines: list[tuple[float, float, str]]) -> str:
     return "\n".join(parts)
 
 
-def _build_youtube_srt_lines(segments: list[WhisperSegment], cjk: bool) -> list[tuple[float, float, str]]:
+def _build_youtube_srt_lines(segments: list[WhisperSegment], cjk: bool, max_words: int = 7) -> list[tuple[float, float, str]]:
     """
-    Builds subtitle lines using the cumulative word-by-word approach.
-    For each segment, each new word reveal creates a new subtitle entry
-    showing all words accumulated so far in that segment.
-    The cue starts at the current word's timestamp and ends at the next
-    word's start (or the segment end for the last word).
+    Replicates YouTube-style 2-line rolling captions.
+
+    All words across every segment are treated as a single chronological
+    stream.  A screen buffer of at most 2 lines is maintained.  Each word
+    event produces one subtitle cue whose text is the current visible
+    buffer joined by a newline.
+
+    Line-fill rule
+        Latin  – a line is full when it already contains max_words tokens.
+        CJK    – a line is full when its accumulated character count reaches
+                 max_words * 2 characters (matching the existing SRT chunker).
+
+    Roll-up rule
+        When a 3rd line would be needed the oldest line is evicted, the
+        remaining line shifts up, and the new line starts with the current
+        word — identical to YouTube's automatic captions.
+
+    Cue timing
+        start  = current word's start timestamp
+        end    = next word's start timestamp  (or current word's end for the
+                 very last word in the stream)
+        A minimum duration of 0.05 s is enforced to prevent zero-length cues.
+
+    Segments with no word-level timestamps fall back to a single plain cue
+    covering the full segment duration so the output is never empty.
     """
-    lines: list[tuple[float, float, str]] = []
+
+    all_words: list[WhisperWord] = []
+    fallback_cues: list[tuple[float, float, str]] = []
+
     for seg in segments:
         words = seg.get("words", [])
         if not words:
-            lines.append((seg.get("start", 0.0), seg.get("end", 0.0), seg.get("text", "").strip()))
+            fallback_cues.append((
+                seg.get("start", 0.0),
+                seg.get("end", 0.0),
+                seg.get("text", "").strip(),
+            ))
             continue
-        seg_end = seg.get("end", 0.0)
-        for i, w in enumerate(words):
-            word_start = w.get("start")
-            if word_start is None:
-                word_start = seg.get("start", 0.0)
-            if i + 1 < len(words):
-                next_start = words[i + 1].get("start")
-                cue_end = next_start if next_start is not None else seg_end
+        seg_start = seg.get("start", 0.0)
+        seg_end   = seg.get("end",   0.0)
+        for w in words:
+            word: WhisperWord = {
+                "word":  w.get("word", ""),
+                "start": w.get("start") if w.get("start") is not None else seg_start,
+                "end":   w.get("end")   if w.get("end")   is not None else seg_end,
+            }
+            all_words.append(word)
+
+    if not all_words:
+        return fallback_cues
+
+    max_chars_per_line = max_words * (2 if cjk else 10)
+
+    screen: list[list[WhisperWord]] = []
+
+    def _render_screen() -> str:
+        rendered_lines = []
+        for line_tokens in screen:
+            rendered_lines.append(_join_tokens(line_tokens, cjk))
+        return "\n".join(rendered_lines)
+
+    def _line_char_count(line_tokens: list[WhisperWord]) -> int:
+        return sum(len(t["word"]) for t in line_tokens)
+
+    def _line_is_full(line_tokens: list[WhisperWord]) -> bool:
+        if cjk:
+            return _line_char_count(line_tokens) >= max_chars_per_line
+        return len(line_tokens) >= max_words
+
+    cues: list[tuple[float, float, str]] = []
+
+    for i, word in enumerate(all_words):
+        word_start: float = word["start"]
+
+        if i + 1 < len(all_words):
+            cue_end = all_words[i + 1]["start"]
+        else:
+            cue_end = word["end"]
+        cue_end = max(cue_end, word_start + 0.05)
+
+        if not screen:
+            screen.append([word])
+        else:
+            active_line = screen[-1]
+
+            if _line_is_full(active_line):
+                new_line = [word]
+                if len(screen) >= 2:
+                    screen.pop(0)
+                screen.append(new_line)
             else:
-                cue_end = seg_end
-            cue_end = max(cue_end, word_start + 0.05)
-            accumulated = words[: i + 1]
-            text = _join_tokens(accumulated, cjk)
-            lines.append((word_start, cue_end, text))
-    return lines
+                active_line.append(word)
+
+        cues.append((word_start, cue_end, _render_screen()))
+
+    return cues
 
 
 def _build_youtube_ass_text(segments: list[WhisperSegment], cjk: bool) -> str:
@@ -449,13 +523,13 @@ def _generate_result_dict(config: TranscriptionConfig, all_segments: list[Whispe
     txt_content = re.sub(r"(['ʼ`'\-])\s+(?=\w)", r"\1", txt_content)
 
     standard_srt_lines = segments_to_srt_lines(all_segments, config.max_words_per_line, cjk_mode)
-    srt_content = build_srt_text(standard_srt_lines)
-    vtt_content = build_vtt_text(standard_srt_lines)
+    srt_content = build_srt_text(standard_srt_lines, align_left=False)
+    vtt_content = build_vtt_text(standard_srt_lines, align_left=False)
     ass_content = build_ass_text(standard_srt_lines)
 
-    yt_srt_lines = _build_youtube_srt_lines(all_segments, cjk_mode)
-    yt_srt_content = build_srt_text(yt_srt_lines)
-    yt_vtt_content = build_vtt_text(yt_srt_lines)
+    yt_srt_lines = _build_youtube_srt_lines(all_segments, cjk_mode, config.max_words_per_line)
+    yt_srt_content = build_srt_text(yt_srt_lines, align_left=True)
+    yt_vtt_content = build_vtt_text(yt_srt_lines, align_left=True)
     yt_ass_content = _build_youtube_ass_text(all_segments, cjk_mode)
 
     stats = {
