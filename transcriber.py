@@ -64,7 +64,8 @@ def format_srt_time(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 def format_ass_time(seconds: float) -> str:
-    total_cs = int(seconds * 100)
+    # Використовуємо round() перед приведенням до int, як і в SRT
+    total_cs = int(round(seconds * 100))
     cs = total_cs % 100
     total_s = total_cs // 100
     s = total_s % 60
@@ -243,20 +244,25 @@ def _build_youtube_srt_lines(segments: list[WhisperSegment], cjk: bool, max_word
     covering the full segment duration so the output is never empty.
     """
 
-    all_words: list[WhisperWord] = []
-    fallback_cues: list[tuple[float, float, str]] = []
+    all_words: list[dict] = []
 
     for seg in segments:
         words = seg.get("words", [])
-        if not words:
-            fallback_cues.append((
-                seg.get("start", 0.0),
-                seg.get("end", 0.0),
-                seg.get("text", "").strip(),
-            ))
-            continue
         seg_start = seg.get("start", 0.0)
         seg_end   = seg.get("end",   0.0)
+        
+        if not words:
+            text = seg.get("text", "").strip()
+            if text:
+                # Якщо слів немає, додаємо весь текст як один неподільний блок
+                all_words.append({
+                    "word": text,
+                    "start": seg_start,
+                    "end": seg_end,
+                    "is_block": True
+                })
+            continue
+
         for w in words:
             word: WhisperWord = {
                 "word":  w.get("word", ""),
@@ -266,11 +272,10 @@ def _build_youtube_srt_lines(segments: list[WhisperSegment], cjk: bool, max_word
             all_words.append(word)
 
     if not all_words:
-        return fallback_cues
+        return []
 
     max_chars_per_line = max_words * (2 if cjk else 10)
-
-    screen: list[list[WhisperWord]] = []
+    screen: list[list[dict]] = []
 
     def _render_screen() -> str:
         rendered_lines = []
@@ -278,10 +283,10 @@ def _build_youtube_srt_lines(segments: list[WhisperSegment], cjk: bool, max_word
             rendered_lines.append(_join_tokens(line_tokens, cjk))
         return "\n".join(rendered_lines)
 
-    def _line_char_count(line_tokens: list[WhisperWord]) -> int:
+    def _line_char_count(line_tokens: list[dict]) -> int:
         return sum(len(t["word"]) for t in line_tokens)
 
-    def _line_is_full(line_tokens: list[WhisperWord]) -> bool:
+    def _line_is_full(line_tokens: list[dict]) -> bool:
         if cjk:
             return _line_char_count(line_tokens) >= max_chars_per_line
         return len(line_tokens) >= max_words
@@ -302,7 +307,8 @@ def _build_youtube_srt_lines(segments: list[WhisperSegment], cjk: bool, max_word
         else:
             active_line = screen[-1]
 
-            if _line_is_full(active_line):
+            # Перевіряємо: лінія заповнена, АБО поточний елемент є блоком, АБО на лінії вже лежить блок
+            if _line_is_full(active_line) or word.get("is_block") or any(t.get("is_block") for t in active_line):
                 new_line = [word]
                 if len(screen) >= 2:
                     screen.pop(0)
@@ -315,13 +321,11 @@ def _build_youtube_srt_lines(segments: list[WhisperSegment], cjk: bool, max_word
     return cues
 
 
-def _build_youtube_ass_text(segments: list[WhisperSegment], cjk: bool) -> str:
+def _build_youtube_ass_text(segments: list[WhisperSegment], cjk: bool, max_words: int = 7) -> str:
     r"""
     Builds ASS subtitles with karaoke-style {\k} timing tags so that each
     word is highlighted exactly when it is spoken within the segment line.
-    The {\k<N>} tag specifies the duration in centiseconds for the following
-    syllable/word.  The entire segment is shown as a single dialogue line
-    and words light up in sequence.
+    Lines are split according to max_words / max_chars constraints.
     """
     header = "\n".join([
         "[Script Info]",
@@ -337,6 +341,11 @@ def _build_youtube_ass_text(segments: list[WhisperSegment], cjk: bool) -> str:
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ])
+    
+    if max_words < 1:
+        max_words = 1
+    max_chars_per_line = max_words * (2 if cjk else 10)
+    
     dialogue_lines = []
     for seg in segments:
         words = seg.get("words", [])
@@ -348,29 +357,62 @@ def _build_youtube_ass_text(segments: list[WhisperSegment], cjk: bool) -> str:
                 f"Dialogue: 0,{format_ass_time(start_t)},{format_ass_time(end_t)},Karaoke,,0,0,0,,{text}"
             )
             continue
+
         seg_start = seg.get("start", 0.0)
         seg_end = seg.get("end", 0.0)
-        tagged_parts: list[str] = []
-        for i, w in enumerate(words):
-            w_start = w.get("start")
-            if w_start is None:
-                w_start = seg_start
-            if i + 1 < len(words):
-                next_start = words[i + 1].get("start")
-                w_end = next_start if next_start is not None else seg_end
-            else:
-                w_end = seg_end
-            duration_cs = max(1, int(round((w_end - w_start) * 100)))
-            word_text = w["word"].strip()
-            if cjk:
-                tagged_parts.append(f"{{\\k{duration_cs}}}{word_text}")
-            else:
-                separator = "" if i == 0 else " "
-                tagged_parts.append(f"{separator}{{\\k{duration_cs}}}{word_text}")
-        line_text = "".join(tagged_parts)
-        dialogue_lines.append(
-            f"Dialogue: 0,{format_ass_time(seg_start)},{format_ass_time(seg_end)},Karaoke,,0,0,0,,{line_text}"
-        )
+        
+        # Групуємо слова у чанки відповідно до лімітів
+        chunks = []
+        current_chunk = []
+        current_chars = 0
+        
+        for w in words:
+            current_chunk.append(w)
+            current_chars += len(w.get("word", ""))
+            if len(current_chunk) >= max_words or current_chars >= max_chars_per_line:
+                chunks.append(current_chunk)
+                current_chunk = []
+                current_chars = 0
+        if current_chunk:
+            chunks.append(current_chunk)
+            
+        # Обробляємо кожен чанк як окремий рядок Dialogue
+        for chunk in chunks:
+            line_start = chunk[0].get("start")
+            if line_start is None:
+                line_start = seg_start
+                
+            line_end = chunk[-1].get("end")
+            if line_end is None:
+                line_end = seg_end
+                
+            tagged_parts: list[str] = []
+            for j, w in enumerate(chunk):
+                w_start = w.get("start")
+                if w_start is None:
+                    w_start = line_start
+                    
+                if j + 1 < len(chunk):
+                    next_start = chunk[j + 1].get("start")
+                    w_end = next_start if next_start is not None else line_end
+                else:
+                    w_end = line_end
+                    
+                duration_cs = max(1, int(round((w_end - w_start) * 100)))
+                word_text = w.get("word", "").strip()
+                
+                if cjk:
+                    tagged_parts.append(f"{{\\k{duration_cs}}}{word_text}")
+                else:
+                    separator = "" if j == 0 else " "
+                    tagged_parts.append(f"{separator}{{\\k{duration_cs}}}{word_text}")
+                    
+            line_text = "".join(tagged_parts)
+            line_text = re.sub(r" (\{\\k\d+\}[''ʼ`\-])", r"\1", line_text)
+            dialogue_lines.append(
+                f"Dialogue: 0,{format_ass_time(line_start)},{format_ass_time(line_end)},Karaoke,,0,0,0,,{line_text}"
+            )
+            
     return header + "\n" + "\n".join(dialogue_lines)
 
 
@@ -530,7 +572,7 @@ def _generate_result_dict(config: TranscriptionConfig, all_segments: list[Whispe
     yt_srt_lines = _build_youtube_srt_lines(all_segments, cjk_mode, config.max_words_per_line)
     yt_srt_content = build_srt_text(yt_srt_lines, align_left=True)
     yt_vtt_content = build_vtt_text(yt_srt_lines, align_left=True)
-    yt_ass_content = _build_youtube_ass_text(all_segments, cjk_mode)
+    yt_ass_content = _build_youtube_ass_text(all_segments, cjk_mode, config.max_words_per_line)
 
     stats = {
         "language": detected_lang,

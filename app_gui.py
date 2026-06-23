@@ -270,6 +270,28 @@ class TranscriberApp(BASE_CLASS):
         self.txt_view = ctk.CTkTextbox(self.phase2_frame, wrap="word", font=ctk.CTkFont(size=13))
         self.txt_view.grid(row=3, column=0, sticky="nsew", pady=(0, 15))
 
+        def _copy_selection(event=None):
+            try:
+                selected = self.txt_view._textbox.get("sel.first", "sel.last")
+            except Exception:
+                selected = self.txt_view._textbox.get("1.0", "end-1c")
+            self.clipboard_clear()
+            self.clipboard_append(selected)
+            return "break"
+
+        def _select_all(event=None):
+            self.txt_view._textbox.tag_add("sel", "1.0", "end")
+            return "break"
+
+        self.txt_view._textbox.bind("<Control-c>", _copy_selection)
+        self.txt_view._textbox.bind("<Control-C>", _copy_selection)
+        self.txt_view._textbox.bind("<Control-Cyrillic_es>", _copy_selection)  # С
+        self.txt_view._textbox.bind("<Control-Cyrillic_ES>", _copy_selection)  # Shift+С
+        self.txt_view._textbox.bind("<Control-a>", _select_all)
+        self.txt_view._textbox.bind("<Control-A>", _select_all)
+        self.txt_view._textbox.bind("<Control-Cyrillic_ef>", _select_all)      # Ф
+        self.txt_view._textbox.bind("<Control-Cyrillic_EF>", _select_all)      # Shift+Ф
+
         btn_frame = ctk.CTkFrame(self.phase2_frame, fg_color="transparent")
         btn_frame.grid(row=4, column=0, sticky="ew")
 
@@ -388,9 +410,39 @@ class TranscriberApp(BASE_CLASS):
                 vals = ["Default"] + [f"Track {t['index']} ({t['lang']})" for t in tracks]
                 combo = ctk.CTkOptionMenu(row_frame, variable=track_var, values=vals, width=160)
                 combo.pack(side="left", padx=5)
+            
+            # --- КНОПКА ВИДАЛЕННЯ (стане крайньою праворуч) ---
             btn_del = ctk.CTkButton(row_frame, text="X", width=30, fg_color="#D32F2F", hover_color="#B71C1C", command=lambda r=row_frame, p=path: self._remove_file(r, p))
             btn_del.pack(side="right", padx=5)
+
+            # --- КНОПКА ПЕРЕГЛЯДУ (стане ліворуч від [X]) ---
+            btn_play = ctk.CTkButton(
+                row_frame, 
+                text="▶", 
+                width=30, 
+                fg_color="#2FA572", 
+                hover_color="#1F7A52", 
+                command=lambda p=path: self._preview_file(p)
+            )
+            btn_play.pack(side="right", padx=5)
+
             self.file_items.append({"path": path, "row": row_frame, "track_var": track_var, "tracks": tracks})
+
+    def _preview_file(self, path) -> None:
+        """Відкриває аудіо або відео файл у системному плеєрі за замовчуванням."""
+        if not os.path.exists(path):
+            messagebox.showerror("Помилка", "Файл не знайдено або він був переміщений.")
+            return
+        
+        try:
+            if os.name == "nt":  # Windows
+                os.startfile(path)
+            elif sys.platform == "darwin":  # macOS
+                subprocess.run(["open", path], check=True)
+            else:  # Linux
+                subprocess.run(["xdg-open", path], check=True)
+        except Exception as e:
+            messagebox.showerror("Помилка", f"Не вдалося запустити програвач:\n{e}")
 
     def _remove_file(self, row_frame, path) -> None:
         row_frame.destroy()
@@ -566,9 +618,17 @@ class TranscriberApp(BASE_CLASS):
 
             self.phase1_frame.grid_forget()
             self.phase2_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
+            
             paths = list(self.results_data.keys())
-            names = [os.path.basename(p) for p in paths]
-            self.combo_file_map = {os.path.basename(p): p for p in paths}
+            names = []
+            self.combo_file_map = {}
+            
+            # Додаємо індекс [i+1], щоб уникнути колізій однакових імен файлів
+            for i, p in enumerate(paths):
+                display_name = f"[{i+1}] {os.path.basename(p)}"
+                names.append(display_name)
+                self.combo_file_map[display_name] = p
+
             self.file_combo.configure(values=names)
             self.file_combo.set(names[0])
             self._on_result_select()
@@ -638,7 +698,9 @@ class TranscriberApp(BASE_CLASS):
         tab = self.seg_btn.get()
 
         ext, content = self._get_content_by_tab(res, tab)
-        init_name = os.path.splitext(name)[0] + ext
+        
+        # Використовуємо чисте ім'я файлу з шляху (без префікса [1])
+        init_name = os.path.splitext(os.path.basename(path))[0] + ext
         out_path = filedialog.asksaveasfilename(initialfile=init_name, defaultextension=ext)
         if out_path:
             with open(out_path, "w", encoding="utf-8") as f:
