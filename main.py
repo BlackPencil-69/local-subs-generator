@@ -3,6 +3,8 @@ import sys
 import json
 import re
 import subprocess
+import threading
+import urllib.error
 import urllib.request
 from importlib.metadata import version, PackageNotFoundError
 
@@ -88,15 +90,34 @@ def check_yt_dlp_updates() -> bool:
     return False
 
 
+def _background_update_check() -> None:
+    """Runs in a daemon thread: must never touch Tk widgets and must never raise."""
+    try:
+        outdated = check_yt_dlp_updates()
+        if outdated:
+            console_log.warn("Continuing with outdated yt-dlp — URL downloads may fail.")
+    except Exception as exc:
+        console_log.warn(f"yt-dlp update check failed unexpectedly: {exc}")
+
+
+def _start_update_check_thread() -> None:
+    threading.Thread(
+        target=_background_update_check,
+        name="yt-dlp-update-check",
+        daemon=True,
+    ).start()
+
+
 def main() -> None:
     console_log.setup()
 
-    outdated = check_yt_dlp_updates()
-    if outdated:
-        console_log.warn("Continuing with outdated yt-dlp — URL downloads may fail.")
-
     console_log.section("Starting GUI")
     app = TranscriberApp()
+
+    # Start the (network + subprocess) check only after the window exists,
+    # so it can never delay the first paint of the GUI.
+    app.after(300, _start_update_check_thread)
+
     app.mainloop()
 
     console_log.divider()
