@@ -17,21 +17,21 @@ A powerful **local desktop application** for automatic speech recognition and su
 ---
 
 ## ✨ Features
-
-- 🖥️ **Desktop GUI** — built with CustomTkinter, no browser required
-- 🔒 **Fully Local** — no cloud uploads, no API calls for transcription, complete privacy
-- 📂 **File Queue** — add and process multiple audio/video files in one run
-- 🔀 **Dual Backend** — switch between **Faster-Whisper** and **OpenAI Whisper**
-- 📝 **Four Output Formats** — plain text (`.TXT`), subtitles (`.SRT`), WEBVTT (`.VTT`), advanced subtitles (`.ASS`)
-- 🌍 **Multilingual** — supports 25+ languages, plus Auto-detect
-- 🖱️ **Drag & Drop** — drop files directly onto the queue
-- 🔗 **URL Transcription** — download and transcribe audio/video directly from links (YouTube, etc.)
-- 🎬 **YouTube-style Subtitles `[Beta]`** — dynamic word-by-word highlighting / karaoke-style timing. Fully optimized for `.ASS` format, with experimental support for `.SRT` and `.VTT`.
-- ⚡ **Progress Bar** — real-time progress with ETA display; switches to indeterminate mode when needed
-- ❌ **Cancel Anytime** — gracefully stop transcription between segments
-- 💾 **Save Settings** — backend, model, language, and words-per-line are remembered between sessions
-- 📊 **Result Statistics** — detected language, segment count, word count, character count, avg words/segment
-- 🌙 **Dark Theme** — modern dark UI with system theme awareness
+- 🖥️ **Desktop GUI** — built with CustomTkinter, modern dark theme, clean and intuitive layout.
+- 🔒 **Fully Local & Private** — 100% on-device processing, no cloud uploads, complete data privacy.
+- 📂 **Batch File Queue** — queue and transcribe multiple audio/video files sequentially.
+- 🧠 **In-Memory Model Caching** — keeps loaded models in RAM across batches for faster queue processing.
+- 🔀 **Dual Backend** — switch between **Faster-Whisper** (CTranslate2) and **OpenAI Whisper**.
+- ⚙️ **Hardware & Speed Control** — select device directly (`Auto`, `CPU`, `CUDA`) and adjust speed/accuracy (`beam_size`).
+- 🔊 **Audio Normalization** — optional dynamic leveling (`dynaudnorm` + `highpass`) for quiet sections and phone-call audio.
+- 📝 **Four Output Formats** — plain text (`.TXT`), subtitles (`.SRT`), WebVTT (`.VTT`), and advanced subtitles (`.ASS`).
+- ✏️ **Editable Transcripts** — edit text directly inside the app before saving (with full Undo/Redo support).
+- 🎬 **YouTube-Style Subtitles** — cumulative word-by-word roll-up and karaoke-style timing tags (`{\k}`) with smart pause clearing.
+- 🌍 **Multilingual** — 25+ languages supported plus automatic language identification.
+- 🖱️ **Drag & Drop** — drop files directly into the window.
+- 🔗 **Direct URL Download** — paste video links (YouTube, TikTok, etc.) to download and transcribe automatically via yt-dlp.
+- ⚡ **Real-Time Progress** — responsive progress bar with duration and dynamic ETA tracking.
+- 💾 **Persistent Settings** — preferences (backend, model, device, language, beam size, normalization) are remembered.
 
 <img src="examples/interface.png" width="600" alt="Application interface"/>
 
@@ -46,7 +46,8 @@ A powerful **local desktop application** for automatic speech recognition and su
 | `base` / `base.en` | **Good default for most use cases** |
 | `small` / `small.en` | Better accuracy |
 | `medium` / `medium.en` | High accuracy |
-| `large-v1/v2/v3` | Best accuracy, higher resource usage |
+| large-v1/v2/v3 | Best accuracy, higher resource usage |
+| large-v3-turbo | Fast and accurate, optimized large model |
 | `distil-small.en` | Distilled, English-only, fast |
 | `distil-medium.en` | Distilled, English-only, balanced |
 | `distil-large-v2/v3` | Distilled large, fast and accurate |
@@ -135,11 +136,11 @@ python main.py
 ## 📖 How to Use
 
 1. **Add files** — drag & drop media files onto the queue, or click **Add Files...** or paste the link
-2. **Configure settings** — choose backend, model, language, and max words per subtitle line
+2. **Configure settings** — choose backend, model, language, compute device, speed/accuracy (beam_size), max words per line, and toggle audio normalization if needed.
 3. **Start** — click **Start Transcription** and watch the progress bar with ETA
 4. **Review results** — switch between **Full Text**, **SRT Subtitles**, **VTT Subtitles** and **ASS Subtitles** tabs
 5. **Toggle YouTube Style** [Beta] — turn on the YouTube Style switch in the top right corner if you want word-by-word cumulative subtitle generation.
-6. **Export** — copy to clipboard, save a single file, or **Download All** to export every format for every file at once
+6. **Edit & Export** — tweak any typos directly in the text view if needed, then copy to clipboard, save the current file, or click Save All to export all formats at once.
 7. **New session** — click **New Transcription** to go back and process more files
 
 <img src="examples/results.png" width="600" alt="Transcription results"/>
@@ -179,8 +180,8 @@ ffmpeg -version
 # If it fails, reinstall or add ffmpeg to your PATH
 ```
 
-### GPU not being used
-The app detects CUDA automatically via `torch` and `ctranslate2`. Make sure you have a CUDA-compatible PyTorch installed. To force CPU, open `transcriber.py` and change the `detect_device()` return value to `"cpu"`.
+### GPU not being used / Forcing CPU
+The app automatically detects CUDA if compatible libraries are installed. You can also explicitly select your hardware using the **Device** dropdown in the settings (`Auto`, `CPU (int8)`, or `CUDA (GPU)`). If CUDA is unavailable, it will safely fall back to CPU.
 
 ### MemoryError
 - Switch to a smaller model (`tiny` or `base`)
