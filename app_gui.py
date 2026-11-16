@@ -120,11 +120,75 @@ BTN_COPY_TEXT = "Copy"
 BTN_COPIED_TEXT = "Copied! ✓"
 STATUS_READY_TEXT = "Ready."
 
-# Audio tracks: the "default" label and the one-word prefix of a track name.
-# The track index always follows the prefix immediately, so it can be parsed reliably.
-TRACK_DEFAULT = "Default"
-TRACK_PREFIX = "Track"
-_TRACK_IDX_RE = re.compile(rf"^{re.escape(TRACK_PREFIX)}\s+(\d+)")
+# Audio track selection (only offered for files that contain more than one audio track, e.g. .mkv)
+AUDIO_BTN_TEXT = "🔊 Choose a different audio track"
+AUDIO_BTN_WIDTH = 250
+AUDIO_BTN_ACTIVE = ("#B26A00", "#8F5500")   # (fg, hover) of the button once a non-default track is chosen
+TRACK_AUTO = -1                             # IntVar value that stands for "Default (automatic)"
+UNKNOWN_LANGUAGE = "Unknown language"
+
+# ISO 639-2 (B and T variants) and ISO 639-1 codes as they appear in the "language" tag of audio streams
+_LANG_NAMES = {
+    "eng": "English", "en": "English",
+    "ukr": "Ukrainian", "uk": "Ukrainian",
+    "rus": "Russian", "ru": "Russian",
+    "bel": "Belarusian", "be": "Belarusian",
+    "jpn": "Japanese", "ja": "Japanese",
+    "kor": "Korean", "ko": "Korean",
+    "chi": "Chinese", "zho": "Chinese", "zh": "Chinese", "cmn": "Chinese (Mandarin)", "yue": "Cantonese",
+    "ger": "German", "deu": "German", "de": "German",
+    "fre": "French", "fra": "French", "fr": "French",
+    "spa": "Spanish", "es": "Spanish",
+    "ita": "Italian", "it": "Italian",
+    "por": "Portuguese", "pt": "Portuguese",
+    "pol": "Polish", "pl": "Polish",
+    "cze": "Czech", "ces": "Czech", "cs": "Czech",
+    "slo": "Slovak", "slk": "Slovak", "sk": "Slovak",
+    "bul": "Bulgarian", "bg": "Bulgarian",
+    "rum": "Romanian", "ron": "Romanian", "ro": "Romanian",
+    "hun": "Hungarian", "hu": "Hungarian",
+    "gre": "Greek", "ell": "Greek", "el": "Greek",
+    "tur": "Turkish", "tr": "Turkish",
+    "ara": "Arabic", "ar": "Arabic",
+    "heb": "Hebrew", "he": "Hebrew",
+    "hin": "Hindi", "hi": "Hindi",
+    "tha": "Thai", "th": "Thai",
+    "vie": "Vietnamese", "vi": "Vietnamese",
+    "ind": "Indonesian", "id": "Indonesian",
+    "may": "Malay", "msa": "Malay", "ms": "Malay",
+    "fil": "Filipino", "tgl": "Tagalog",
+    "dut": "Dutch", "nld": "Dutch", "nl": "Dutch",
+    "swe": "Swedish", "sv": "Swedish",
+    "nor": "Norwegian", "nob": "Norwegian", "no": "Norwegian",
+    "dan": "Danish", "da": "Danish",
+    "fin": "Finnish", "fi": "Finnish",
+    "ice": "Icelandic", "isl": "Icelandic", "is": "Icelandic",
+    "est": "Estonian", "et": "Estonian",
+    "lav": "Latvian", "lv": "Latvian",
+    "lit": "Lithuanian", "lt": "Lithuanian",
+    "hrv": "Croatian", "hr": "Croatian",
+    "srp": "Serbian", "sr": "Serbian",
+    "slv": "Slovenian", "sl": "Slovenian",
+    "bos": "Bosnian", "bs": "Bosnian",
+    "mac": "Macedonian", "mkd": "Macedonian", "mk": "Macedonian",
+    "alb": "Albanian", "sqi": "Albanian", "sq": "Albanian",
+    "geo": "Georgian", "kat": "Georgian", "ka": "Georgian",
+    "arm": "Armenian", "hye": "Armenian", "hy": "Armenian",
+    "aze": "Azerbaijani", "az": "Azerbaijani",
+    "kaz": "Kazakh", "kk": "Kazakh",
+    "uzb": "Uzbek", "uz": "Uzbek",
+    "per": "Persian", "fas": "Persian", "fa": "Persian",
+    "urd": "Urdu", "ur": "Urdu",
+    "ben": "Bengali", "bn": "Bengali",
+    "tam": "Tamil", "ta": "Tamil",
+    "tel": "Telugu", "te": "Telugu",
+    "cat": "Catalan", "ca": "Catalan",
+    "baq": "Basque", "eus": "Basque", "eu": "Basque",
+    "glg": "Galician", "gl": "Galician",
+    "gle": "Irish", "ga": "Irish",
+    "lat": "Latin", "la": "Latin",
+}
+_LANG_UNKNOWN_CODES = {"", "und", "unk", "mis", "mul", "zxx"}   # undetermined / uncoded / multiple / no linguistic content
 
 # Stats banner colors (background, text) for the dark theme
 STATS_STYLES = {
@@ -199,26 +263,175 @@ def _pick(value, allowed, default):
     except TypeError:
         return default
 
-def _track_label(t: dict) -> str:
-    """Audio track label for the dropdown: "Track 2 (ukr - Title)" or "Track 2 (ukr)"."""
-    index = t.get("index")
-    lang = t.get("lang") or "und"
-    title = str(t.get("title") or "").strip()
-    if title:
-        return f"{TRACK_PREFIX} {index} ({lang} - {title[:18]})"
-    return f"{TRACK_PREFIX} {index} ({lang})"
+def _lang_name(code) -> str:
+    """Readable language name for an ISO 639 code from the stream tags ("ukr" -> "Ukrainian")."""
+    c = str(code or "").strip().lower()
+    if c in _LANG_UNKNOWN_CODES:
+        return UNKNOWN_LANGUAGE
+    return _LANG_NAMES.get(c) or c.upper()
 
-def _parse_track_index(value: str):
-    """Track index from a dropdown label; None if "Default" is selected or the label is not recognized."""
-    if not value or value == TRACK_DEFAULT:
-        return None
-    m = _TRACK_IDX_RE.match(value)
-    if m:
-        return int(m.group(1))
+def _shorten(text, limit: int) -> str:
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[: max(1, limit - 1)].rstrip() + "…"
+
+def _channels_label(channels) -> str:
     try:
-        return int(value.split()[1])
-    except (IndexError, ValueError):
-        return None
+        n = int(channels or 0)
+    except (TypeError, ValueError):
+        return ""
+    return {1: "mono", 2: "stereo", 6: "5.1", 8: "7.1"}.get(n, f"{n} ch" if n else "")
+
+def _track_title(t: dict) -> str:
+    """Main line of a track in the picker: language and the track name from the file ("Ukrainian — Dub")."""
+    lang = _lang_name(t.get("lang"))
+    title = " ".join(str(t.get("title") or "").split())
+    known = lang != UNKNOWN_LANGUAGE
+    if known and title:
+        return f"{lang} — {title}"
+    if title:
+        return title
+    if known:
+        return lang
+    return "Untitled audio track"
+
+def _track_details(t: dict) -> str:
+    """Secondary line of a track in the picker: number, language code, codec, channels, default flag."""
+    bits = [f"Track #{t.get('number', '?')}"]
+    code = str(t.get("lang") or "").strip().lower()
+    if code not in _LANG_UNKNOWN_CODES:
+        bits.append(code)
+    codec = str(t.get("codec") or "").upper()
+    if codec:
+        bits.append(codec)
+    channels = _channels_label(t.get("channels"))
+    if channels:
+        bits.append(channels)
+    if t.get("default"):
+        bits.append("default")
+    return " · ".join(bits)
+
+def _track_button_label(t: dict) -> str:
+    """Text of the row button once a track has been chosen: "🔊 #2 · Ukrainian · Dub"."""
+    lang = _lang_name(t.get("lang"))
+    title = " ".join(str(t.get("title") or "").split())
+    parts = [f"#{t.get('number', '?')}"]
+    if lang != UNKNOWN_LANGUAGE:
+        parts.append(lang)
+    if title:
+        parts.append(title)
+    return "🔊 " + _shorten(" · ".join(parts), 30)
+
+
+class AudioTrackDialog(ctk.CTkToplevel):
+    """Modal window for choosing which audio track of a media file is transcribed."""
+
+    def __init__(self, parent, file_name: str, tracks: list, current_index=None) -> None:
+        super().__init__(parent)
+        self.title("Choose audio track")
+        self.minsize(500, 300)
+        self.accepted: bool = False
+        self.selected_index = current_index       # absolute stream index, or None = default (automatic)
+
+        valid = {t.get("index") for t in tracks}
+        start = current_index if current_index in valid else TRACK_AUTO
+        self._var = tk.IntVar(master=self, value=start)
+
+        width = 580
+        rows = len(tracks) + 1                                  # +1 for "Default (automatic)"
+        height = max(320, 170 + 82 * rows)
+        try:
+            height = min(height, max(320, self.winfo_screenheight() - 140))   # long lists scroll instead of overflowing the screen
+        except tk.TclError:
+            pass
+        self._place(parent, width, height)
+        self.transient(parent)
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 6))
+        ctk.CTkLabel(header, text="Select the audio track to transcribe", font=ctk.CTkFont(size=16, weight="bold"), anchor="w").pack(anchor="w")
+        ctk.CTkLabel(header, text=file_name, text_color="gray", anchor="w", justify="left", wraplength=520).pack(anchor="w", pady=(2, 0))
+
+        scroll = ctk.CTkScrollableFrame(self)
+        scroll.grid(row=1, column=0, sticky="nsew", padx=14, pady=6)
+
+        self._add_option(scroll, TRACK_AUTO, "Default (automatic)",
+                         "ffmpeg picks the track itself (normally the one flagged as default)")
+        for t in tracks:
+            self._add_option(scroll, int(t["index"]), _track_title(t), _track_details(t))
+
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.grid(row=2, column=0, sticky="ew", padx=20, pady=(6, 16))
+        self.btn_ok = ctk.CTkButton(footer, text="Use this track", width=150, fg_color="#2FA572", hover_color="#1F7A52", command=self._on_ok)
+        self.btn_ok.pack(side="right")
+        self.btn_cancel = ctk.CTkButton(footer, text="Cancel", width=110, fg_color="gray", hover_color="#424242", command=self._on_cancel)
+        self.btn_cancel.pack(side="right", padx=(0, 10))
+
+        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+        self.bind("<Escape>", lambda e: self._on_cancel())
+        self.bind("<Return>", lambda e: self._on_ok())
+        # grab_set() fails on a window that is not visible yet, so activation is deferred a little
+        self.after(150, self._activate)
+
+    def _place(self, parent, width: int, height: int) -> None:
+        """Centers the dialog over the main window (sizes are logical, CTk applies the DPI scaling itself)."""
+        try:
+            parent.update_idletasks()
+            try:
+                scale = float(self._get_window_scaling())
+            except Exception:
+                scale = 1.0
+            x = parent.winfo_rootx() + (parent.winfo_width() - int(width * scale)) // 2
+            y = parent.winfo_rooty() + (parent.winfo_height() - int(height * scale)) // 2
+            self.geometry(f"{width}x{height}+{max(x, 0)}+{max(y, 0)}")
+        except Exception:
+            self.geometry(f"{width}x{height}")
+
+    def _add_option(self, parent, value: int, title: str, detail: str) -> None:
+        card = ctk.CTkFrame(parent)
+        card.pack(fill="x", padx=4, pady=3)
+        radio = ctk.CTkRadioButton(card, text=_shorten(title, 64), variable=self._var, value=value, font=ctk.CTkFont(size=14, weight="bold"))
+        radio.pack(anchor="w", padx=12, pady=(10, 0))
+        lbl = ctk.CTkLabel(card, text=detail, anchor="w", justify="left", text_color="gray", font=ctk.CTkFont(size=12), wraplength=480)
+        lbl.pack(anchor="w", padx=40, pady=(0, 10))
+        # The whole card is clickable, not only the small radio circle; a double click confirms
+        for widget in (card, lbl):
+            widget.bind("<Button-1>", lambda e, v=value: self._var.set(v))
+            widget.bind("<Double-Button-1>", lambda e, v=value: self._pick_and_close(v))
+
+    def _activate(self) -> None:
+        try:
+            if not self.winfo_exists():
+                return
+            self.lift()
+            self.focus_force()
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+    def _pick_and_close(self, value: int) -> None:
+        self._var.set(value)
+        self._on_ok()
+
+    def _on_ok(self) -> None:
+        value = int(self._var.get())
+        self.selected_index = None if value == TRACK_AUTO else value
+        self.accepted = True
+        self._close()
+
+    def _on_cancel(self) -> None:
+        self.accepted = False
+        self._close()
+
+    def _close(self) -> None:
+        try:
+            self.grab_release()
+        except tk.TclError:
+            pass
+        self.destroy()
+
 
 class TranscriberApp(BASE_CLASS):
     def __init__(self, *args, **kwargs) -> None:
@@ -662,21 +875,18 @@ class TranscriberApp(BASE_CLASS):
                 continue
             row_frame = ctk.CTkFrame(self.files_scroll)
             row_frame.pack(fill="x", pady=2, padx=2)
-            # The file name takes all the free space in the row — long names are no longer cut off at a fixed 280 px
-            name_lbl = ctk.CTkLabel(row_frame, text=_display_name(path), anchor="w")
-            name_lbl.pack(side="left", padx=8, fill="x", expand=True)
-            tracks = get_audio_tracks(path)
-            track_var = ctk.StringVar(value=TRACK_DEFAULT)
-            if tracks:
-                vals = [TRACK_DEFAULT] + [_track_label(t) for t in tracks]
-                combo = ctk.CTkOptionMenu(row_frame, variable=track_var, values=vals, width=250, dynamic_resizing=False)
-                combo.pack(side="left", padx=5)
 
-            # --- DELETE BUTTON (ends up rightmost) ---
+            # On import nothing changes: the default audio track is used (audio_index = None).
+            # Only files with SEVERAL audio tracks get the "Choose a different audio track" button.
+            tracks = get_audio_tracks(path)
+            item = {"path": path, "row": row_frame, "tracks": tracks, "audio_index": None, "audio_btn": None}
+
+            # The right-hand widgets are packed FIRST so that a long file name can never push them out of the row.
+            # --- DELETE BUTTON (rightmost) ---
             btn_del = ctk.CTkButton(row_frame, text="X", width=30, fg_color="#D32F2F", hover_color="#B71C1C", command=lambda r=row_frame, p=path: self._remove_file(r, p))
             btn_del.pack(side="right", padx=5)
 
-            # --- PREVIEW BUTTON (ends up left of [X]) ---
+            # --- PREVIEW BUTTON (left of [X]) ---
             btn_play = ctk.CTkButton(
                 row_frame,
                 text="▶",
@@ -687,7 +897,47 @@ class TranscriberApp(BASE_CLASS):
             )
             btn_play.pack(side="right", padx=5)
 
-            self.file_items.append({"path": path, "row": row_frame, "track_var": track_var, "tracks": tracks})
+            # --- AUDIO TRACK BUTTON (left of [▶]; only for files with 2+ audio tracks) ---
+            if len(tracks) > 1:
+                audio_btn = ctk.CTkButton(
+                    row_frame,
+                    text=AUDIO_BTN_TEXT,
+                    width=AUDIO_BTN_WIDTH,
+                    command=lambda it=item: self._choose_audio_track(it),
+                )
+                audio_btn.pack(side="right", padx=5)
+                item["audio_btn"] = audio_btn
+                item["audio_btn_colors"] = (audio_btn.cget("fg_color"), audio_btn.cget("hover_color"))
+
+            # The file name takes all the remaining space in the row
+            name_lbl = ctk.CTkLabel(row_frame, text=_display_name(path), anchor="w")
+            name_lbl.pack(side="left", padx=8, fill="x", expand=True)
+
+            self.file_items.append(item)
+
+    def _choose_audio_track(self, item: dict) -> None:
+        """Opens the audio track picker for one queued file and remembers the choice."""
+        if self._running or not item.get("tracks"):
+            return
+        dialog = AudioTrackDialog(self, _display_name(item["path"]), item["tracks"], item.get("audio_index"))
+        self.wait_window(dialog)
+        if dialog.accepted:
+            item["audio_index"] = dialog.selected_index
+            self._update_audio_btn(item)
+
+    def _update_audio_btn(self, item: dict) -> None:
+        """Shows the chosen track on the row button (and highlights it); the default state restores the original look."""
+        btn = item.get("audio_btn")
+        if btn is None:
+            return
+        idx = item.get("audio_index")
+        track = next((t for t in item["tracks"] if t.get("index") == idx), None) if idx is not None else None
+        if track is None:
+            item["audio_index"] = None
+            fg, hover = item["audio_btn_colors"]
+            btn.configure(text=AUDIO_BTN_TEXT, fg_color=fg, hover_color=hover)
+        else:
+            btn.configure(text=_track_button_label(track), fg_color=AUDIO_BTN_ACTIVE[0], hover_color=AUDIO_BTN_ACTIVE[1])
 
     def _preview_file(self, path) -> None:
         """Opens an audio or video file in the default system player."""
@@ -765,7 +1015,7 @@ class TranscriberApp(BASE_CLASS):
 
         configs = []
         for item in self.file_items:
-            stream_idx = _parse_track_index(item["track_var"].get())
+            stream_idx = item.get("audio_index")
             configs.append(TranscriptionConfig(
                 input_file=item["path"],
                 backend=self._backend_var.get(),
