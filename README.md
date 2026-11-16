@@ -32,6 +32,7 @@ A powerful **local desktop application** for automatic speech recognition and su
 - 🔗 **Direct URL Download** — paste video links (YouTube, TikTok, etc.) to download and transcribe automatically via yt-dlp.
 - ⚡ **Real-Time Progress** — responsive progress bar with duration and dynamic ETA tracking.
 - 💾 **Persistent Settings** — preferences (backend, model, device, language, beam size, normalization) are remembered.
+- 📶 **MKV Audio Track Selection:** Choose a specific embedded audio stream (with language, codec, and channel info) before transcribing `.mkv` files.
 
 <img src="examples/interface.png" width="600" alt="Application interface"/>
 
