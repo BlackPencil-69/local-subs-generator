@@ -1,40 +1,48 @@
+<a id="readme-top"></a>
+
 # 🎬 local-subs-generator — Local Subtitle Generator with GUI
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![CustomTkinter](https://img.shields.io/badge/CustomTkinter-5.2+-purple.svg)](https://github.com/TomSchimansky/CustomTkinter)
 [![OpenAI Whisper](https://img.shields.io/badge/OpenAI_Whisper-v20231117-00a67e.svg)](https://github.com/openai/whisper)
 [![faster-whisper](https://img.shields.io/badge/faster--whisper-1.2+-green.svg)](https://github.com/SYSTRAN/faster-whisper)
-[![Gemini](https://img.shields.io/badge/Google_Gemini-API_v1-1a73e8.svg)](https://ai.google.dev/)
-[![Claude](https://img.shields.io/badge/Anthropic_Claude-4.6_Sonnet-cc6633.svg)](https://docs.anthropic.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> 🤖 **Note:** This project was written with the assistance of Artificial Intelligence. Created to demonstrate modern AI-assisted development.
-
-A powerful **local desktop application** for automatic speech recognition and subtitle generation — **everything runs on your machine, no cloud, no internet required**. Supports both **Faster-Whisper** and **OpenAI Whisper** backends, outputs `.TXT`, `.SRT`, `.VTT`, and `.ASS` formats, and processes **multiple files in a queue and supports direct video/URL transcription** — all from a clean dark-themed GUI.
-
-> 🖥️ **100% local processing** — your audio and video files never leave your computer. All transcription is done locally using on-device AI models.
+A powerful **local desktop application** for automatic speech recognition and subtitle generation. Everything runs on your machine: **no cloud, no internet required**, and your audio and video files never leave your computer. It supports both **Faster-Whisper** and **OpenAI Whisper** backends, exports `.TXT`, `.SRT`, `.VTT`, and `.ASS` formats, and processes **multiple files in a queue** with direct video/URL transcription, all from a clean dark-themed GUI.
 
 ---
 
 ## ✨ Features
-- 🖥️ **Desktop GUI** — built with CustomTkinter, modern dark theme, clean and intuitive layout.
-- 🔒 **Fully Local & Private** — 100% on-device processing, no cloud uploads, complete data privacy.
-- 📂 **Batch File Queue** — queue and transcribe multiple audio/video files sequentially.
-- 🧠 **In-Memory Model Caching** — keeps loaded models in RAM across batches for faster queue processing.
+- 🖥️ **Desktop GUI** — built with CustomTkinter, modern dark theme, clean layout.
+- 📂 **Batch File Queue** — queue and transcribe multiple files sequentially.
 - 🔀 **Dual Backend** — switch between **Faster-Whisper** (CTranslate2) and **OpenAI Whisper**.
-- ⚙️ **Hardware & Speed Control** — select device directly (`Auto`, `CPU`, `CUDA`) and adjust speed/accuracy (`beam_size`).
-- 🔊 **Audio Normalization** — optional dynamic leveling (`dynaudnorm` + `highpass`) for quiet sections and phone-call audio.
+- ⚙️ **Hardware & Speed Control** — select device (`Auto`, `CPU`, `CUDA`) and adjust accuracy vs. speed with `beam_size`.
+- 🌍 **Multilingual** — 25+ languages plus automatic language identification.
 - 📝 **Four Output Formats** — plain text (`.TXT`), subtitles (`.SRT`), WebVTT (`.VTT`), and advanced subtitles (`.ASS`).
-- ✏️ **Editable Transcripts** — edit text directly inside the app before saving (with full Undo/Redo support).
-- 🎬 **YouTube-Style Subtitles** — cumulative word-by-word roll-up and karaoke-style timing tags (`{\k}`) with smart pause clearing.
-- 🌍 **Multilingual** — 25+ languages supported plus automatic language identification.
-- 🖱️ **Drag & Drop** — drop files directly into the window.
-- 🔗 **Direct URL Download** — paste video links (YouTube, TikTok, etc.) to download and transcribe automatically via yt-dlp.
-- ⚡ **Real-Time Progress** — responsive progress bar with duration and dynamic ETA tracking.
-- 💾 **Persistent Settings** — preferences (backend, model, device, language, beam size, normalization) are remembered.
-- 📶 **MKV Audio Track Selection:** Choose a specific embedded audio stream (with language, codec, and channel info) before transcribing `.mkv` files.
+- ✏️ **Editable Transcripts** — edit text directly in the app before saving, with full Undo/Redo support.
+- 🎬 **YouTube-Style Subtitles** — cumulative word-by-word roll-up and karaoke-style timing tags (`{\k}`).
+- 🔗 **Direct URL Download** — paste video links (YouTube, TikTok, etc.) and transcribe them automatically via yt-dlp.
 
-<img src="examples/interface.png" width="600" alt="Application interface"/>
+<img src="examples/interface.png" width="600" alt="Main window of local-subs-generator in dark theme with file queue and settings"/>
+
+---
+
+## 🎯 Use Cases & Practical Workflows
+
+### Transcribe a Specific Audio Track from Multi-Track MKV Videos
+When working with dual-audio anime, movies, or multi-language recordings, you do not need to demux or extract audio manually with external tools. Load any `.mkv` file into the queue and open the **Choose a different audio track** dialog to inspect every embedded stream by index, language tag, codec, and channel layout (e.g., `Track #1 · jpn · AAC · stereo`), or let the app select the default track automatically.
+
+### Generate ASS Subtitles with Karaoke Timing Placeholders (`{\k}`)
+Designed for fansubbers, translators, and video editors who work in Aegisub or Subtitle Edit. Beyond standard `.srt`, `.vtt`, and `.txt` exports, `local-subs-generator` outputs Advanced SubStation Alpha (`.ass`) files complete with `{\k}` timing tags for silent pauses, smart sentence-boundary line wrapping, and preserved punctuation (hyphenated compounds, decimals, timestamps, and percentages).
+
+### Improve Speech Recognition on Quiet or Noisy Audio via FFmpeg
+Low-volume voice recordings, distant microphones, and background rumble often cause Whisper models to miss words or hallucinate. Enabling the built-in **FFmpeg audio preprocessing filter** applies a `highpass=80Hz` filter paired with `dynaudnorm` (dynamic audio normalization) before transcription, leveling quiet speech segments without manual DAW editing.
+
+### Direct YouTube & Online Video Transcription (`yt-dlp`)
+Paste one or multiple video URLs directly into the application to fetch audio and generate clean subtitles in a single step. Built-in pause detection automatically clears on-screen text during silent gaps longer than `2.0s` so captions never linger over empty scenes, while automatic startup checks keep `yt-dlp` up to date.
+
+### Batch-Transcribe Large Video Queues Offline on CPU or GPU
+Process entire seasons or lecture series unattended. Heavy models (`large-v3`, `medium`) stay cached in RAM across queued files to eliminate repeated loading delays, while automatic CPU logical thread detection and selectable `beam_size` presets (High Accuracy, Balanced, Fast CPU) let you tune speed vs. precision for your hardware.
 
 ---
 
@@ -47,11 +55,11 @@ A powerful **local desktop application** for automatic speech recognition and su
 | `base` / `base.en` | **Good default for most use cases** |
 | `small` / `small.en` | Better accuracy |
 | `medium` / `medium.en` | High accuracy |
-| large-v1/v2/v3 | Best accuracy, higher resource usage |
-| large-v3-turbo | Fast and accurate, optimized large model |
+| `large-v1` / `large-v2` / `large-v3` | Best accuracy, higher resource usage |
+| `large-v3-turbo` | Fast and accurate, optimized large model |
 | `distil-small.en` | Distilled, English-only, fast |
 | `distil-medium.en` | Distilled, English-only, balanced |
-| `distil-large-v2/v3` | Distilled large, fast and accurate |
+| `distil-large-v2` / `distil-large-v3` | Distilled large, fast and accurate |
 
 ### OpenAI Whisper
 `tiny` · `base` · `small` · `medium` · `large` · `turbo`
@@ -144,21 +152,8 @@ python main.py
 6. **Edit & Export** — tweak any typos directly in the text view if needed, then copy to clipboard, save the current file, or click Save All to export all formats at once.
 7. **New session** — click **New Transcription** to go back and process more files
 
-<img src="examples/results.png" width="600" alt="Transcription results"/>
-<img src="examples/results2.png" width="600" alt="Transcription results (alternate view)"/>
-
----
-
-## 📤 Output Formats
-
-| Format | Description |
-|---|---|
-| `.TXT` | Clean plain text, words joined naturally with punctuation handling |
-| `.SRT` | Standard subtitle format, compatible with VLC, MPC-HC, Aegisub, etc. |
-| `.VTT` | Web Video Text Tracks, ideal for web-based players and HTML5 video |
-| `.ASS` | Advanced SubStation Alpha subtitles with default styling |
-
-All formats are generated in a single transcription pass — no re-processing needed.
+<img src="examples/results.png" width="600" alt="Transcription results shown in the Full Text and SRT Subtitles tabs"/>
+<img src="examples/results2.png" width="600" alt="Generated VTT and ASS subtitle output tabs after transcription"/>
 
 ---
 
@@ -204,6 +199,19 @@ If downloading video or audio from a link fails, it is usually because the under
 ```bash
 pip install --upgrade yt-dlp
 ```
+
+---
+
+## ❓ Frequently Asked Questions (FAQ)
+
+**Does `local-subs-generator` require an internet connection?**
+No. Once `faster-whisper` or `openai-whisper` models are downloaded, all audio and video transcription runs 100% locally on your CPU or NVIDIA GPU. Internet access is only used when transcribing directly from a URL via `yt-dlp`.
+
+**Why are there two Whisper engines (OpenAI Whisper vs. faster-whisper)?**
+`faster-whisper` uses CTranslate2 to run up to 4x faster with significantly lower RAM/VRAM usage, making it ideal for most systems. The original `openai-whisper` backend is included as a fallback option for maximum compatibility.
+
+**Which subtitle and media formats are supported?**
+You can import any audio or video format supported by FFmpeg (`.mp4`, `.mkv`, `.avi`, `.mov`, `.mp3`, `.wav`, `.flac`, `.ogg`, `.m4a`) and export subtitles to `.srt`, `.ass`, `.vtt`, or plain `.txt`. All formats are generated in a single transcription pass.
 
 ---
 
