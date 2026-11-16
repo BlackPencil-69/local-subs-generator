@@ -134,22 +134,66 @@ def format_ass_time(seconds: float) -> str:
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 def get_audio_tracks(file_path: str) -> list[dict]:
+    """
+    Lists the audio streams of a media file via ffprobe.
+
+    Every item has: index (absolute stream index, used as `-map 0:<index>`), number (1-based
+    position among the audio streams), lang (ISO 639 code, "und" if unknown), title, codec,
+    channels and default (the container's "default" flag).
+    Returns [] if ffprobe is missing/fails or the file has no audio (the reason is logged).
+
+    NOTE: the old `-show_entries stream=...,tags:language,tags:title` spec is rejected by ffprobe
+    ("No match for section 'language,tags'", exit code 1), so the old version silently returned []
+    for EVERY file. `-show_streams` is understood by all ffprobe versions.
+    """
+    cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_streams", "-of", "json", file_path]
     try:
-        cmd = ["ffprobe", "-v", "error", "-show_entries", "stream=index,codec_type,tags:language,tags:title", "-of", "json", file_path]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=True, encoding="utf-8", **_subprocess_flags())
-        data = json.loads(res.stdout)
-        tracks = []
-        for stream in data.get("streams", []):
-            if stream.get("codec_type") == "audio":
-                tags = stream.get("tags", {})
-                tracks.append({
-                    "index": stream["index"],
-                    "lang": tags.get("language", "und"),
-                    "title": tags.get("title", "")
-                })
-        return tracks
-    except Exception:
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+            **_subprocess_flags(),
+        )
+    except FileNotFoundError:
+        console_log.warn("ffprobe not found on PATH — audio track selection is unavailable")
         return []
+    except subprocess.TimeoutExpired:
+        console_log.warn(f"ffprobe timed out while reading the audio tracks of: {file_path}")
+        return []
+    except Exception as exc:
+        console_log.warn(f"ffprobe failed ({type(exc).__name__}: {exc}) — audio track selection is unavailable")
+        return []
+
+    if res.returncode != 0:
+        err_lines = (res.stderr or "").strip().splitlines()
+        console_log.warn(f"ffprobe exited with code {res.returncode} for {file_path}: {err_lines[-1] if err_lines else 'no details'}")
+        return []
+
+    try:
+        data = json.loads(res.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        console_log.warn(f"Could not parse the ffprobe output: {exc}")
+        return []
+
+    tracks: list[dict] = []
+    for stream in data.get("streams", []):
+        if stream.get("codec_type") != "audio" or "index" not in stream:
+            continue
+        tags = {str(k).lower(): v for k, v in (stream.get("tags") or {}).items()}
+        disposition = stream.get("disposition") or {}
+        tracks.append({
+            "index": int(stream["index"]),
+            "number": len(tracks) + 1,
+            "lang": str(tags.get("language") or "").strip().lower() or "und",
+            "title": str(tags.get("title") or "").strip(),
+            "codec": str(stream.get("codec_name") or ""),
+            "channels": int(stream.get("channels") or 0),
+            "default": bool(disposition.get("default")),
+        })
+    return tracks
 
 def extract_audio_track(input_file: str, stream_index: Optional[int] = None, normalize_audio: bool = True) -> str:
     fd, temp_path = tempfile.mkstemp(suffix=".wav")
@@ -194,13 +238,108 @@ def _is_cjk_language(all_words: list[WhisperWord]) -> bool:
     hits = sum(1 for w in sample if has_cjk(w["word"]))
     return hits / len(sample) >= 0.4
 
+# ---------------------------------------------------------------------------
+# Spacing between tokens
+#
+# Whisper (both backends) builds "words" out of sub-word tokens. A token that is a bare
+# punctuation mark starts a NEW word, and the letters/digits that follow it are appended to
+# that word WITHOUT a leading space. That is why "well-known", "3.5", "12:30", "50%" and
+# "don't" arrive as
+#     " well" + "-known",  " 3" + ".5",  " 12" + ":30",  " 50" + "%",  " don" + "'t"
+# The only information about where a space really belongs is the leading whitespace of the
+# RAW token. Stripping it and re-joining everything with " " (what this module used to do)
+# produced "well -known", "3 .5", "12 :30", "50 %" — and the regex patches for apostrophes
+# that were bolted on afterwards broke "said 'hello'" and "the dogs' bones".
+# ---------------------------------------------------------------------------
+
+# Scripts written without spaces between words (Thai, Lao, Myanmar, Khmer)
+_RE_NO_SPACE_SCRIPT = re.compile("[\u0e00-\u0eff\u1000-\u109f\u1780-\u17ff]")
+# After these characters a directly following letter/digit is glued: "don'" + "t", "well-" + "known"
+_NO_SPACE_AFTER = "'\u2019\u02bc`-\u2010\u2011([{\"\u201c\u00ab\u00bf\u00a1$#@/\\"
+# Safety net: a space INSIDE a number ("3 .5", "12 :30", "1 ,000") is never correct
+_RE_SPACE_INSIDE_NUMBER = re.compile(r"(?<=\d)[ \t]+(?=[.,:]\d)")
+_RE_MULTI_SPACE = re.compile(r"[ \t]{2,}")
+
+
+def _is_wordish(ch: str) -> bool:
+    """Letter/digit of any script (combining marks of no-space scripts such as Thai count as well)."""
+    return ch.isalnum() or bool(_RE_NO_SPACE_SCRIPT.match(ch))
+
+def _raw_word(token) -> str:
+    """Text of a word exactly as Whisper produced it (including the leading space). Accepts a word dict or a str."""
+    raw = token.get("word") if isinstance(token, dict) else token
+    return raw if isinstance(raw, str) else ""
+
+def _space_between(prev_raw: str, next_raw: str) -> bool:
+    """
+    True if a space belongs between two consecutive RAW tokens.
+
+    - Whitespace at the boundary (Whisper's leading space) -> space. This keeps a dash between
+      words ("he - said", " -i") and French-style " !" / " %" exactly as the model wrote them.
+    - No whitespace and the next token starts with punctuation/a symbol (".5", ",5", ":30", "%",
+      "-known", "'t", ")") -> it continues the previous token: NO space.
+    - No whitespace, a letter/digit follows a letter/digit -> real Whisper output never does this
+      (such a token would have been appended to the previous word), so the spacing was lost
+      somewhere: insert a space. Exception: scripts written without spaces (Thai, Lao, ...).
+    - No whitespace after an apostrophe/hyphen/opening bracket ("don'" + "t") -> glued.
+    """
+    prev_core = prev_raw.strip()
+    next_core = next_raw.strip()
+    if not prev_core or not next_core:
+        return False
+    if next_raw[:1].isspace() or prev_raw[-1:].isspace():
+        return True
+    a, b = prev_core[-1], next_core[0]
+    if _is_wordish(b):
+        if a in _NO_SPACE_AFTER:
+            return False
+        return not (_RE_NO_SPACE_SCRIPT.match(a) or _RE_NO_SPACE_SCRIPT.match(b))
+    return False
+
+def _normalize_spacing(text: str) -> str:
+    """Last-resort cleanup for spaces that can never be correct (inside numbers)."""
+    return _RE_SPACE_INSIDE_NUMBER.sub("", text)
+
 def _join_tokens(tokens: list[WhisperWord], cjk: bool) -> str:
-    cleaned = [w["word"].strip() for w in tokens]
+    """Joins word dicts into one line of text, restoring spaces from the RAW tokens (see _space_between)."""
     if cjk:
-        return "".join(cleaned)
-    text = " ".join(cleaned).strip()
-    text = re.sub(r"(?<=\w)\s+(['\u2019\u02bc`])(?=\w)", r"\1", text)
-    return text
+        return "".join(_raw_word(w).strip() for w in tokens)
+    parts: list[str] = []
+    prev_raw = ""
+    for w in tokens:
+        raw = _raw_word(w)
+        core = raw.strip()
+        if not core:
+            if raw and prev_raw:
+                prev_raw += " "      # a whitespace-only token acts as a separator
+            continue
+        if parts and _space_between(prev_raw, raw):
+            parts.append(" ")
+        parts.append(core)
+        prev_raw = raw
+    return _normalize_spacing(_RE_MULTI_SPACE.sub(" ", "".join(parts)))
+
+def _build_plain_text(all_segments: list[WhisperSegment], cjk: bool) -> str:
+    """Full text of the transcription. Segments are separated by a space unless the next one continues the previous token."""
+    out: list[str] = []
+    prev_last_raw = ""
+    for seg in all_segments:
+        words = seg.get("words") or []
+        if words:
+            text = _join_tokens(words, cjk)
+            first_raw = _raw_word(words[0])
+            last_raw = _raw_word(words[-1])
+        else:
+            first_raw = last_raw = seg.get("text", "") or ""
+            text = "".join(first_raw.split()) if cjk else first_raw.strip()
+        if not text:
+            continue
+        if out and not cjk and _space_between(prev_last_raw, first_raw):
+            out.append(" ")
+        out.append(text)
+        prev_last_raw = last_raw
+    return _normalize_spacing("".join(out))
+
 
 # ---------------------------------------------------------------------------
 # Subtitle timing and splitting constants
@@ -231,6 +370,8 @@ _RE_NEXT_STARTS_WITH_JOINER = re.compile(rf"^[{_APOSTROPHES}\-]\w")
 _RE_PREV_ENDS_WITH_JOINER = re.compile(rf"\w[{_APOSTROPHES}\-]$")
 _RE_ENDS_WITH_WORD_CHAR = re.compile(r"\w$")
 _RE_STARTS_WITH_WORD_CHAR = re.compile(r"\w")
+_RE_NEXT_STARTS_WITH_NUM_SEP = re.compile(r"^[.,:]\d")   # ".5" ",5" ":30" — a number split in two
+_RE_CLOSING_ONLY = re.compile("^[%\u2030\u00b0:;!?.,\u2026)\\]}\u00bb\u201d\u2019]+$")   # a token made only of closing marks: "%" ":" "!" ")" "…"
 
 
 def _ends_sentence(text: str) -> bool:
@@ -257,8 +398,10 @@ def _word_gap(prev_word: dict, next_word: dict) -> Optional[float]:
 
 def _is_glued(prev_text: str, next_text: str) -> bool:
     """
-    True if next_text is a continuation of prev_text WITHOUT a space
-    (a broken word): "don" + "'t", "well" + "-known", "well-" + "known".
+    Text-level check (used for finished subtitle lines, where Whisper's raw spacing is already
+    gone): True if next_text is a continuation of prev_text WITHOUT a space — a broken word
+    ("don" + "'t", "well" + "-known", "well-" + "known") or a broken number
+    ("3" + ".5", "12" + ":30", "1" + ",000").
 
     A hyphen that acts as a dash between words ("he - said", "Yes. -Hello") is NOT
     treated as a glue point: the dash is not attached to a word on one side.
@@ -267,6 +410,10 @@ def _is_glued(prev_text: str, next_text: str) -> bool:
     nxt = next_text.strip()
     if not prev or not nxt:
         return False
+
+    # Decimal point / time colon / thousands separator split from its number.
+    if _RE_NEXT_STARTS_WITH_NUM_SEP.match(nxt) and prev[-1:].isdigit():
+        return True
 
     # The next token starts with an apostrophe/hyphen attached to a letter,
     # and the previous one ends with a letter/digit ("don" + "'t", "well" + "-known").
@@ -287,14 +434,39 @@ def _is_glued(prev_text: str, next_text: str) -> bool:
 
     return False
 
+def _tokens_glued(prev_raw: str, next_raw: str) -> bool:
+    """
+    Token-level check on RAW Whisper tokens: True if the two tokens are written together
+    (no space between them) and the next one is a continuation — punctuation or a symbol
+    (".5", "%", "-known", "'t", ",", ")") or the second half of a word broken at an
+    apostrophe/hyphen ("don'" + "t"). Such a pair must never be split across lines/chunks,
+    otherwise a line would start with ".5" or "-known". A token made only of closing marks
+    ("%", ":", "!", ")", "…") is kept with the previous word even if a space precedes it.
+    """
+    prev_core = prev_raw.strip()
+    next_core = next_raw.strip()
+    if not prev_core or not next_core:
+        return False
+    # A lone closing mark ("%", ":", "!", ")", "…") never starts a line, even when the model put a
+    # space before it (French typography: "50 %", "Bonjour !").
+    if _RE_CLOSING_ONLY.match(next_core):
+        return True
+    if _space_between(prev_raw, next_raw):
+        return False
+    # Here there is no space between the tokens. Two touching letters can only be a
+    # no-space script (Thai, ...), where a break between words is fine.
+    return not (_is_wordish(prev_core[-1]) and _is_wordish(next_core[0]))
+
 def _keep_together(prev_text: str, next_text: str) -> bool:
     """
-    True if the line/chunk must not be broken between the two tokens:
-    a broken word (apostrophe/hyphen) or a "dangling" dash at the end of a line.
+    True if the line/chunk must not be broken between the two (raw) tokens:
+    a broken word/number (apostrophe, hyphen, decimal point, ...) or a "dangling" dash
+    at the end of a line.
     """
     if prev_text.strip() in _DASH_TOKENS:
         return True
-    return _is_glued(prev_text, next_text)
+    return _tokens_glued(prev_text, next_text)
+
 
 def _chunk_bounds(chunk: list, seg_start: float, seg_end: float) -> tuple[float, float]:
     """
@@ -577,8 +749,10 @@ def _build_youtube_srt_lines(segments: list[WhisperSegment], cjk: bool, max_word
         else:
             active_line = screen[-1]
 
-            # Check: the line is full, OR the current item is a block, OR the line already holds a block
-            if _line_is_full(active_line) or word.get("is_block") or any(t.get("is_block") for t in active_line):
+            # Check: the line is full (but a glued pair such as "well" + "-known" or "3" + ".5" is never split),
+            # OR the current item is a block, OR the line already holds a block
+            line_full = _line_is_full(active_line) and not _keep_together(active_line[-1]["word"], word["word"])
+            if line_full or word.get("is_block") or any(t.get("is_block") for t in active_line):
                 new_line = [word]
                 if len(screen) >= 2:
                     screen.pop(0)
@@ -677,7 +851,7 @@ def _build_youtube_ass_text(segments: list[WhisperSegment], cjk: bool, max_words
                 line_end = line_start + 0.1
                 
             tagged_parts: list[str] = []
-            prev_word_text = ""
+            prev_raw_text = ""
             for j, w in enumerate(chunk):
                 w_start = w.get("start")
                 if w_start is None:
@@ -701,13 +875,15 @@ def _build_youtube_ass_text(segments: list[WhisperSegment], cjk: bool, max_words
                     w_end = min(line_end, actual_w_end + ASS_MAX_WORD_HANG_S)
                     
                 duration_cs = max(1, int(round((w_end - w_start) * 100)))
-                word_text = w.get("word", "").strip()
+                raw_text = _raw_word(w)
+                word_text = raw_text.strip()
                 
                 if cjk:
                     tagged_parts.append(f"{{\\k{duration_cs}}}{word_text}")
                 else:
-                    # Broken apostrophes/hyphens are glued without a space; dashes between words keep the space
-                    separator = "" if j == 0 or _is_glued(prev_word_text, word_text) else " "
+                    # The space comes from Whisper's raw tokens: "well" + "-known", "3" + ".5", "don" + "'t" are glued;
+                    # a dash between words ("he - said") keeps its spaces
+                    separator = " " if j > 0 and _space_between(prev_raw_text, raw_text) else ""
                     tagged_parts.append(f"{separator}{{\\k{duration_cs}}}{word_text}")
 
                 # If the word's duration was clipped, skip the rest of the pause with an empty {\k}
@@ -716,7 +892,10 @@ def _build_youtube_ass_text(segments: list[WhisperSegment], cjk: bool, max_words
                 if filler_cs >= 1:
                     tagged_parts.append(f"{{\\k{filler_cs}}}")
 
-                prev_word_text = word_text
+                if word_text:
+                    prev_raw_text = raw_text
+                elif raw_text:
+                    prev_raw_text += " "      # a whitespace-only token acts as a separator
                     
             line_text = "".join(tagged_parts)
             dialogue_lines.append(
@@ -736,13 +915,14 @@ def transcribe(config: TranscriptionConfig, progress_callback: Callable[[float, 
     if config.backend == "Faster-Whisper":
         console_log.info(f"Beam size: {config.beam_size}")
     console_log.info(f"Audio normalization: {'ON' if config.normalize_audio else 'OFF'}")
+    console_log.info(f"Audio stream: {config.audio_stream_index if config.audio_stream_index is not None else 'default (automatic)'}")
     console_log.blank()
 
     target_file = config.input_file
     temp_audio_file = None
 
     if config.audio_stream_index is not None:
-        progress_callback(0.01, f"Converting audio track {config.audio_stream_index} to WAV 16kHz mono...")
+        progress_callback(0.01, f"Converting the selected audio track (stream {config.audio_stream_index}) to WAV 16kHz mono...")
     else:
         progress_callback(0.01, "Converting audio to WAV 16kHz mono...")
 
@@ -1025,20 +1205,7 @@ def _run_openai_whisper(config: TranscriptionConfig, target_file: str, device: s
 def _generate_result_dict(config: TranscriptionConfig, all_segments: list[WhisperSegment], all_words: list[WhisperWord], detected_lang: str, partial: bool = False) -> dict:
     cjk_mode = _is_cjk_language(all_words) if all_words else False
 
-    txt_lines = []
-    for seg in all_segments:
-        if seg.get("words"):
-            line_text = _join_tokens(seg["words"], cjk_mode)
-        else:
-            line_text = seg["text"].strip()
-            if cjk_mode:
-                line_text = "".join(line_text.split())
-        txt_lines.append(line_text)
-
-    separator = "" if cjk_mode else " "
-    txt_content = separator.join(txt_lines)
-    txt_content = re.sub(r"(?<=\w)\s+(['\u2019\u02bc`])(?=\w)", r"\1", txt_content)
-    txt_content = re.sub(r"(?<=\w)(['\u2019\u02bc`])\s+(?=\w)", r"\1", txt_content)
+    txt_content = _build_plain_text(all_segments, cjk_mode)
 
     standard_srt_lines = segments_to_srt_lines(all_segments, config.max_words_per_line, cjk_mode)
     srt_content = build_srt_text(standard_srt_lines, align_left=False)
